@@ -1,0 +1,21 @@
+# Read more about SSH config files: https://linux.die.net/man/5/ssh_config
+  Host 192.168.0.133
+    HostName 192.168.0.133
+    User jby
+
+  Host raspberrypi
+    HostName raspberrypi
+    User jby
+
+  Host raspberrypi
+    HostName raspberrypi
+    User jby
+
+Host alias
+    HostName hostname
+    User user
+
+    Host 49.247.172.79:2023
+        HostName 49.247.172.79
+        User root
+        Port 2023

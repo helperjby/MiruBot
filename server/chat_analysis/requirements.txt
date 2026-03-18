@@ -1,0 +1,35 @@
+# Web Framework
+fastapi>=0.110.0
+uvicorn>=0.23.2
+
+# HTTP & Scraping (requests 보안 업데이트 적용)
+requests>=2.32.2
+beautifulsoup4==4.12.2
+cloudscraper>=1.2.71
+
+# AI SDK (보안 취약점이 가장 많았던 LangChain 대폭 업데이트)
+langchain>=0.2.0
+langchain-community>=0.2.4
+langchain-core>=0.3.81
+
+# Data Validation & Env
+pydantic>=2.7.0
+python-dotenv==1.0.0
+
+# Google AI & YouTube API
+google-generativeai>=0.8.5
+google-api-python-client>=2.190.0
+youtube-transcript-api>=1.2.4
+
+# Language Detection
+langdetect==1.0.9
+langcodes==3.3.0
+
+# Utility (Trivy에서 경고한 하위 종속성 강제 업데이트)
+urllib3>=2.6.3
+aiohttp>=3.13.3
+h11>=0.16.0
+starlette>=0.40.0
+
+# PDF Parsing (PyPDFLoader 사용 시 필수)
+pypdf>=4.0.0

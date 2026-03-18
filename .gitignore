@@ -1,0 +1,23 @@
+# 기존 백업 (Git 관리 제외)
+_archive/
+
+# APK 및 대용량 파일
+*.apk
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+.env
+venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
