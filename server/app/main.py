@@ -5,18 +5,29 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.params import Query
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles # 중복 제거 후 추가
-from app.models import MessageRequest, SummaryResponse, TranslateRequest, TranslationResponse
+from app.models import (
+    MessageRequest, SummaryResponse, TranslateRequest, TranslationResponse,
+    ChatLogBatchRequest, ChatSummarizeRequest,
+)
 from app.services.web_service import (
-    process_url_content, 
+    process_url_content,
     get_exchange_rate_info,
     get_combined_stock_info
 )
 from app.services.translator_service import is_korean_text, translate_text
 from app.utils.text_utils import extract_urls
 from app.services.game_service import process_key_fortune
+from app.database import init_db
+from app.services.chat_service import insert_chat_logs
+from app.services.summarize_service import summarize_chat
 # --- ▲▲▲ 라이브러리 임포트 ▲▲▲ ---
 
 app = FastAPI(title="URL 요약 및 번역 API", description="카카오톡 메신저봇R과 연동되는 API")
+
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 # --- ▼▼▼ Static "메뉴판" 마운트 ▼▼▼ ---
 # 웹 경로 "/static"을 Docker 내부 경로 "/app/static_files"와 연결
@@ -279,4 +290,33 @@ async def get_key_fortune(user_id: str):
         return JSONResponse(content={
             "status": "error",
             "message": f"서버 오류가 발생했습니다: {str(e)}"
+        })
+
+
+# --- ▼▼▼ 채팅 로그 저장 / 요약 API ▼▼▼ ---
+
+@app.post("/chat-logs/batch")
+def save_chat_logs(request: ChatLogBatchRequest):
+    """봇에서 수집한 채팅 로그를 일괄 저장합니다."""
+    try:
+        saved = insert_chat_logs([m.model_dump() for m in request.messages])
+        return {"saved": saved}
+    except Exception as e:
+        print(f"[main.py] chat-logs/batch Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/summarize-chat")
+def handle_summarize_chat(request: ChatSummarizeRequest):
+    """특정 채팅방의 최근 N시간 대화를 요약합니다."""
+    try:
+        result = summarize_chat(request.channel_id, request.hours)
+        return JSONResponse(content=result)
+    except Exception as e:
+        print(f"[main.py] summarize-chat Error: {str(e)}")
+        return JSONResponse(content={
+            "success": False,
+            "summary": None,
+            "message": f"요약 중 오류가 발생했습니다: {str(e)}",
+            "count": 0,
         })
