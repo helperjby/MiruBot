@@ -205,6 +205,7 @@ function findUser(channelId, searchName) {
 // 💬 명령어 핸들러 (API2)
 // ==========================================================
 function onCommand(cmd) {
+    try {
     let chIdStr = String(cmd.channelId);
 
     if (cmd.command === "활성화") {
@@ -377,6 +378,9 @@ function onCommand(cmd) {
             cmd.reply("✅ [" + targetUser.name + "] 님을 " + (isUpvote ? "추천" : "비추천") + " 했습니다.");
         }
         return;
+    }
+    } catch (e) {
+        Log.e("onCommand 오류: " + String(e));
     }
 }
 

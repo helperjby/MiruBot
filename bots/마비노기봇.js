@@ -281,6 +281,7 @@ function sendMalteseImages(channelId, count, isAutoDaily) {
 }
 
 function onMessage(msg) {
+    try {
     if (msg.room === "말티즈") {
         let now = new Date();
         if (now.getHours() >= 9 && now.getHours() <= 11) {
@@ -293,9 +294,13 @@ function onMessage(msg) {
             }
         }
     }
+    } catch (e) {
+        Log.e("onMessage 오류: " + String(e));
+    }
 }
 
 function onCommand(cmd) {
+    try {
     if (!ALLOWED_ROOM_NAMES.includes(cmd.room)) return;
     let config = readConfig();
 
@@ -514,6 +519,9 @@ function onCommand(cmd) {
             if (notFound.length > 0) cmd.reply("❌ 못 찾음: " + notFound.join(", "));
             if (multiple.length > 0) cmd.reply("💬 중복 검색: " + multiple.join("\n"));
             break;
+    }
+    } catch (e) {
+        Log.e("onCommand 오류: " + String(e));
     }
 }
 

@@ -23,8 +23,9 @@ function onStartCompile() {
 // ⭐ API2 Message 이벤트 핸들러 (방별 유저 정보 로깅)
 // ==========================================================
 function onMessage(msg) {
+    try {
     // 함수 내부는 반드시 let 사용
-    let sender = msg.author.name; 
+    let sender = msg.author.name;
     let hash = msg.author.hash; 
 
     // 안드로이드 11 이상이라 해시값이 정상적으로 존재할 때만 로깅
@@ -48,15 +49,19 @@ function onMessage(msg) {
             FileStream.write(dbPath, JSON.stringify(db, null, 2)); 
         }
     }
+    } catch (e) {
+        Log.e("onMessage 오류: " + String(e));
+    }
 }
 
 // ==========================================================
 // ⭐ API2 Command 이벤트 핸들러 (명령어 처리)
 // ==========================================================
 function onCommand(cmd) {
+    try {
     // 함수 내 모든 변수는 let으로 선언합니다.
-    let replyMsg = ""; 
-    
+    let replyMsg = "";
+
     switch (cmd.command) {
         // ------------------------------------
         // 1. 기본 생존 확인
@@ -208,6 +213,9 @@ function onCommand(cmd) {
             let viewMore = "\u200b".repeat(500);
             cmd.reply(result + "\n" + viewMore + "(상세 내용은 '더보기' 확인)"); 
             break;
+    }
+    } catch (e) {
+        Log.e("onCommand 오류: " + String(e));
     }
 }
 
