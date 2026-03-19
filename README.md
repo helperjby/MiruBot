@@ -1,0 +1,73 @@
+# MiruBot
+
+카카오톡 메신저봇R 기반의 다기능 챗봇 + Raspberry Pi FastAPI 백엔드 시스템
+
+## 구성
+
+```
+MiruBot/
+├── bots/           # 메신저봇R 스크립트 (Android, GraalJS)
+│   ├── API.js          # URL 요약 / 번역 / 이미지 전송
+│   ├── 마비노기봇.js     # 마비노기 모바일 연동 (알림, 랭킹, 룬워드)
+│   ├── 채팅봇.js        # 커뮤니티 (레벨, 추천, 닉네임 히스토리)
+│   ├── 관리봇.js        # 유저 해시 로깅 / 디버깅 유틸리티
+│   └── 라오킹봇.js      # 라이즈 오브 킹덤즈 일정 관리
+├── server/         # Raspberry Pi FastAPI 백엔드 (Docker)
+│   ├── app/
+│   │   ├── main.py         # API 엔드포인트
+│   │   ├── services/       # Gemini LLM, 웹 스크래핑, 번역, 게임
+│   │   └── utils/          # 텍스트 유틸리티
+│   ├── Dockerfile
+│   └── docker-compose.yml
+├── data/           # 게임 데이터 (룬, NPC, 인챈트)
+├── docs/           # 개발 가이드 및 메모
+└── notebooks/      # API 테스트용 Jupyter Notebook
+```
+
+## 주요 기능
+
+### 봇 (카카오톡)
+- **URL 요약** - 채팅에 공유된 링크를 Gemini AI로 자동 요약 (뉴스, YouTube, 커뮤니티 등)
+- **번역** - 한/영 자동 감지 번역
+- **이미지 전송** - OneDrive 동기화 이미지를 카카오톡으로 전송
+- **게임 알림** - 마비노기 모바일 어비스/심층 구멍 실시간 알림
+- **커뮤니티** - 레벨, 경험치, 추천/비추천, 닉네임 변경 이력
+- **운세** - 마비노기 열쇠 운세 미니게임
+- **일정 관리** - 라오킹 폐허/제단 일정, 생일 알림
+
+### 서버 (Raspberry Pi)
+- **Gemini AI 요약** - 웹페이지/YouTube 콘텐츠 요약
+- **환율/증시** - 네이버 금융 실시간 데이터 조회
+- **랜덤 이미지 API** - 카테고리별 이미지 제공
+- **랭킹 프록시** - 외부 게임 랭킹 API 중계
+
+## 기술 스택
+
+| 구분 | 기술 |
+|------|------|
+| 봇 클라이언트 | 메신저봇R (Android) / GraalJS / Jsoup |
+| 백엔드 | FastAPI / Python 3.11 / Docker |
+| AI | Google Gemini 3.1 Flash Lite |
+| 인프라 | Raspberry Pi / Docker Compose |
+| 데이터 동기화 | OneDrive (crontab) |
+
+## 실행 방법
+
+### 서버 (Raspberry Pi)
+
+```bash
+cd server
+cp .env.example .env  # API 키 설정
+docker compose up -d --build
+```
+
+필요한 환경 변수:
+- `GEMINI_API_KEY` - Google Gemini API 키
+- `YOUTUBE_API_KEY` - YouTube Data API v3 키
+
+### 봇 (Android)
+
+1. 메신저봇R 앱 설치
+2. `bots/` 디렉토리의 스크립트를 앱에 등록
+3. `FASTAPI_BASE_URL`을 서버 IP로 수정
+4. 알림 접근 권한 허용 후 스크립트 활성화
