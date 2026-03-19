@@ -45,3 +45,8 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+# SQLite DB (런타임 데이터)
+data/*.db
+data/*.db-shm
+data/*.db-wal
