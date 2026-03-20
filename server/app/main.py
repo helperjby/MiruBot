@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles # 중복 제거 후 추가
 from app.models import (
     MessageRequest, SummaryResponse, TranslateRequest, TranslationResponse,
-    ChatLogBatchRequest, ChatSummarizeRequest, ChatStatsRequest,
+    ChatLogBatchRequest, ChatSummarizeRequest, ChatStatsRequest, ChatPersonalityRequest,
 )
 from app.services.web_service import (
     process_url_content,
@@ -20,7 +20,7 @@ from app.services.game_service import process_key_fortune
 from app.database import init_db
 from app.services.chat_service import insert_chat_logs
 from app.services.summarize_service import summarize_chat
-from app.services.stats_service import get_chat_stats
+from app.services.stats_service import get_chat_stats, get_personality
 # --- ▲▲▲ 라이브러리 임포트 ▲▲▲ ---
 
 app = FastAPI(title="URL 요약 및 번역 API", description="카카오톡 메신저봇R과 연동되는 API")
@@ -335,5 +335,21 @@ def handle_chat_stats(request: ChatStatsRequest):
             "success": False,
             "message": f"통계 조회 중 오류가 발생했습니다: {str(e)}",
             "stats_text": None,
+            "candidates": None,
+        })
+
+
+@app.post("/chat-personality")
+def handle_chat_personality(request: ChatPersonalityRequest):
+    """특정 유저의 인물평을 조회합니다."""
+    try:
+        result = get_personality(request.channel_id, request.nickname)
+        return JSONResponse(content=result)
+    except Exception as e:
+        print(f"[main.py] chat-personality Error: {str(e)}")
+        return JSONResponse(content={
+            "success": False,
+            "message": f"인물평 조회 중 오류가 발생했습니다: {str(e)}",
+            "personality_text": None,
             "candidates": None,
         })

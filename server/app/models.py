@@ -43,3 +43,8 @@ class TranslateResponse(BaseModel):
 class ChatStatsRequest(BaseModel):
     channel_id: str
     nickname: str
+
+
+class ChatPersonalityRequest(BaseModel):
+    channel_id: str
+    nickname: str

@@ -182,15 +182,19 @@ def _format_stats_text(user_name: str, stats: dict) -> str:
 
     # --- 일반 통계 ---
     lines.append("--- 일반 통계 ---")
-    lines.append("[오늘]")
-    lines.append(f" 채팅: {stats['today_chat']}회 | 이모티콘: {stats['today_emoticon']}회 | URL: {stats['today_url']}회")
+    lines.append("[오늘 활동량]")
+    lines.append(f"- 채팅: {stats['today_chat']}회")
+    lines.append(f"- 이모티콘: {stats['today_emoticon']}회")
+    lines.append(f"- URL: {stats['today_url']}회")
     lines.append("")
-    lines.append("[누적]")
-    lines.append(f" 채팅: {stats['total_chat']}회 | 이모티콘: {stats['total_emoticon']}회 | URL: {stats['total_url']}회")
+    lines.append("[누적 활동량]")
+    lines.append(f"- 채팅: {stats['total_chat']}회")
+    lines.append(f"- 이모티콘: {stats['total_emoticon']}회")
+    lines.append(f"- URL: {stats['total_url']}회")
 
-    # --- 시간대별 통계 ---
+    # --- 시간대별 활동 분석 ---
     lines.append("")
-    lines.append("--- 시간대별 통계 ---")
+    lines.append("--- 시간대별 활동 분석 ---")
     hourly = stats["hourly"]
     max_hourly = max(hourly) if hourly else 0
 
@@ -199,9 +203,9 @@ def _format_stats_text(user_name: str, stats: dict) -> str:
         bar = _make_bar(count, max_hourly)
         lines.append(f"{h:02d}시  |  {bar}  ({count}회)")
 
-    # --- 요일별 통계 ---
+    # --- 요일별 활동 분석 ---
     lines.append("")
-    lines.append("--- 요일별 통계 ---")
+    lines.append("--- 요일별 활동 분석 ---")
     daily = stats["daily"]
     max_daily = max(daily) if daily else 0
 
@@ -209,7 +213,6 @@ def _format_stats_text(user_name: str, stats: dict) -> str:
         count = daily[d]
         bar = _make_bar(count, max_daily)
         name = DAY_NAMES[d]
-        # 요일 이름 정렬 (3글자 기준)
         lines.append(f"{name}  |  {bar}  ({count}회)")
 
     return "\n".join(lines)
@@ -304,17 +307,44 @@ def get_chat_stats(channel_id: str, nickname: str) -> dict:
     # 3) 통계 텍스트 포맷팅
     stats_text = _format_stats_text(user_name, stats)
 
-    # 4) 인물평 생성 (메시지 조회 + 전처리 → LLM)
-    personality_msgs = _fetch_personality_messages(channel_id, user_hash)
-    personality = analyze_personality(user_name, personality_msgs)
-
-    # 5) 최종 텍스트 조합
-    header = f"{user_name}님의 채팅 통계"
-    full_text = f"{header}\n\n{stats_text}\n\n--- 인물평 ---\n{personality}"
+    # 4) 최종 텍스트 조합
+    header = f"{user_name}님의 활동 통계입니다."
+    full_text = f"{header}\n\n{stats_text}"
 
     return {
         "success": True,
         "message": None,
         "stats_text": full_text,
+        "candidates": None,
+    }
+
+
+def get_personality(channel_id: str, nickname: str) -> dict:
+    """인물평 전용 파이프라인을 실행합니다."""
+
+    # 1) 닉네임으로 유저 검색
+    search = find_user_hash(channel_id, nickname)
+    if not search["found"]:
+        return {
+            "success": False,
+            "message": search["message"],
+            "personality_text": None,
+            "candidates": search.get("candidates"),
+        }
+
+    user_hash = search["user_hash"]
+    user_name = search["user_name"]
+
+    # 2) 인물평 생성 (메시지 조회 + 전처리 → LLM)
+    personality_msgs = _fetch_personality_messages(channel_id, user_hash)
+    personality = analyze_personality(user_name, personality_msgs)
+
+    header = f"{user_name}님의 인물평"
+    full_text = f"{header}\n\n{personality}"
+
+    return {
+        "success": True,
+        "message": None,
+        "personality_text": full_text,
         "candidates": None,
     }
