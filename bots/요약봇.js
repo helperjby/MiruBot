@@ -250,6 +250,47 @@ bot.addListener(Event.COMMAND, function (cmd) {
             return;
         }
 
+        // --- !채팅통계 명령어 ---
+        if (cmd.command === "채팅통계") {
+            if (cmd.args.length === 0) {
+                cmd.reply("사용법: !채팅통계 닉네임");
+                return;
+            }
+
+            let nickname = cmd.args.join(" ");
+            let channelId = String(cmd.channelId);
+            cmd.reply("'" + nickname + "'님의 채팅 통계를 조회하는 중...");
+
+            new Thread(function () {
+                try {
+                    // 조회 전 버퍼 flush
+                    flushAllBuffers();
+
+                    let response = postToServer("/chat-stats", {
+                        channel_id: channelId,
+                        nickname: nickname
+                    });
+
+                    if (response.success && response.data) {
+                        if (response.data.success && response.data.stats_text) {
+                            let viewMore = "\u200b".repeat(500);
+                            cmd.reply(response.data.stats_text.split("\n")[0] + "\n" + viewMore + "\n" + response.data.stats_text.substring(response.data.stats_text.indexOf("\n") + 1));
+                        } else {
+                            cmd.reply(response.data.message || "통계를 조회할 수 없습니다.");
+                        }
+                    } else {
+                        cmd.reply("통계 요청에 실패했습니다.");
+                        Log.e("[요약봇] 통계 API 실패: " + response.error);
+                    }
+                } catch (e) {
+                    Log.e("[요약봇] 통계 스레드 오류: " + String(e));
+                    cmd.reply("통계 조회 중 오류가 발생했습니다.");
+                }
+            }).start();
+
+            return;
+        }
+
         if (cmd.command !== "요약") return;
 
         // 시간 인자 파싱

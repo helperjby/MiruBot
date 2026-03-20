@@ -38,3 +38,8 @@ class TranslateRequest(BaseModel):
 
 class TranslateResponse(BaseModel):
     translated_text: str
+
+
+class ChatStatsRequest(BaseModel):
+    channel_id: str
+    nickname: str
