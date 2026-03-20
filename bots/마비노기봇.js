@@ -1,11 +1,10 @@
 /*
-* 마비노기봇 (Mabinogi Bot) - v2.7.3 (알림 누적 및 도배 방지 완벽 대응)
- * - BotManager ReferenceError 수정
- * - GraalJS 호환성 대응 (함수 내 const -> let으로 전면 교체)
- * - MediaSender 절대 경로(/storage/emulated/0/...) 및 인스턴스화 적용
- * - FileStream NPE 방어 로직 추가
- * - 알림 누적 방지를 위한 cancelNotification 및 예외 처리 추가
- * - 어비스/심층 구멍 도배 방지 쿨타임 전면 적용
+* 마비노기봇 (Mabinogi Bot) - v2.7.4 (코드 최적화)
+ * - for...in → for 루프 교체 (배열 순회 안전성)
+ * - readConfig() 캐싱 적용 (1분 TTL)
+ * - lastDeepHoleTimeMap 만료 키 정리 로직 추가
+ * - onMessage early return 패턴 적용
+ * - 미사용 상수 및 불필요 typeof 체크 제거
  */
 
 // --- [모듈 및 전역 설정: 전역이므로 const 사용 가능] ---
@@ -18,8 +17,8 @@ const FileOutputStream = java.io.FileOutputStream;
 const FASTAPI_BASE_URL = "http://192.168.0.133:8080"; 
 const DB_PATH = "sdcard/msgbot/mabi_config.json";
 const RUNE_INFO_JSON_PATH = "sdcard/msgbot/Bots/마비노기봇/runeinfo.json";
-const ID_MALTESE = 18448842407409693n; 
 const RUNEWORD_JSON_PATH = "sdcard/msgbot/Bots/마비노기봇/runeword.json";
+const ID_MALTESE = 18448842407409693n; 
 
 const ALLOWED_ROOM_NAMES = ["지통실", "말티즈", "천호", "관리자"];
 const TARGET_APP_PACKAGES = ["life.mabimobi.app", "com.android.chrome"];
@@ -34,14 +33,17 @@ const ALERT_ROOM_MAP = {
     "알리사": []
 };
 
-const KEYWORD_MAINTENANCE_END = ""; 
 const KEYWORD_NOTICE_NEW = "공지";
 
 // --- [상태 저장용 전역 변수 (도배 방지)] ---
-let lastLoggedText = "";             
-let lastAbyssScheduledTime = 0;      
-let lastAbyssNowSent = 0;            
-let lastDeepHoleTimeMap = {};        // [추가] 심층 구멍 쿨타임 관리 객체
+let lastAbyssScheduledTime = 0;
+let lastAbyssNowSent = 0;
+let lastDeepHoleTimeMap = {};        // 심층 구멍 쿨타임 관리 객체
+
+// --- [config 캐싱] ---
+let cachedConfig = null;
+let cachedConfigTime = 0;
+const CONFIG_CACHE_TTL = 60000; // 1분
 
 // --- [헬퍼 함수: 내부 변수는 무조건 let 사용] ---
 
@@ -61,21 +63,32 @@ function getRuneInfo() {
 }
 
 function readConfig() {
+    let now = Date.now();
+    if (cachedConfig && (now - cachedConfigTime < CONFIG_CACHE_TTL)) {
+        return cachedConfig;
+    }
+
     let data = FileStream.read(DB_PATH);
     let defaultConfig = { isRankingOn: true, isAlertOn: true, lastAutoMalteseDate: "" };
     if (!data) {
         FileStream.write(DB_PATH, JSON.stringify(defaultConfig));
+        cachedConfig = defaultConfig;
+        cachedConfigTime = now;
         return defaultConfig;
     }
     try {
-        return JSON.parse(data);
+        cachedConfig = JSON.parse(data);
     } catch (e) {
-        return defaultConfig;
+        cachedConfig = defaultConfig;
     }
+    cachedConfigTime = now;
+    return cachedConfig;
 }
 
 function writeConfig(config) {
     FileStream.write(DB_PATH, JSON.stringify(config, null, 2));
+    cachedConfig = config;
+    cachedConfigTime = Date.now();
 }
 
 function getRunewordString(categoryName, dataList) {
@@ -290,17 +303,18 @@ function sendMalteseImages(channelId, count, isAutoDaily) {
 
 function onMessage(msg) {
     try {
-    if (msg.room === "말티즈") {
-        let now = new Date();
-        if (now.getHours() >= 9 && now.getHours() <= 11) {
-            let config = readConfig();
-            let todayStr = now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
-            if (config.lastAutoMalteseDate !== todayStr) {
-                config.lastAutoMalteseDate = todayStr;
-                writeConfig(config);
-                sendMalteseImages(msg.channelId, 2, true);
-            }
-        }
+    if (msg.room !== "말티즈") return;
+
+    let now = new Date();
+    let hour = now.getHours();
+    if (hour < 9 || hour > 11) return;
+
+    let config = readConfig();
+    let todayStr = now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
+    if (config.lastAutoMalteseDate !== todayStr) {
+        config.lastAutoMalteseDate = todayStr;
+        writeConfig(config);
+        sendMalteseImages(msg.channelId, 2, true);
     }
     } catch (e) {
         Log.e("onMessage 오류: " + String(e));
@@ -508,7 +522,7 @@ function onCommand(cmd) {
             let names = cmd.args.join("").split(",");
             let parts = [], notFound = [], multiple = [], validNames = [];
 
-            for (let i in names) {
+            for (let i = 0; i < names.length; i++) {
                 let q = names[i].trim();
                 if (!q) continue;
                 let m = cRuneList.filter(function(r) { return r.룬.includes(q); });
@@ -585,7 +599,7 @@ function onNotification(sbn) {
 
             let msg = "📅 [어구 예약] 어비스 구멍이 곧 출현합니다.\n⏰ 시작 시간: " + scheduledTime;
 
-            for (let i in ALLOWED_ROOM_NAMES) {
+            for (let i = 0; i < ALLOWED_ROOM_NAMES.length; i++) {
                 bot.send(ALLOWED_ROOM_NAMES[i], msg);
             }
             return;
@@ -593,12 +607,12 @@ function onNotification(sbn) {
 
         // [기능 2-B] 어비스 즉시 알림
         if (fullContent.includes("어비스 구멍 출현!")) {
-            if (nowMillis - lastAbyssNowSent < 600000) return; 
+            if (nowMillis - lastAbyssNowSent < 600000) return;
 
             lastAbyssNowSent = nowMillis;
             let msg = "🚨 [어구 오픈] 어비스 구멍이 지금 열렸습니다!";
 
-            for (let i in ALLOWED_ROOM_NAMES) {
+            for (let i = 0; i < ALLOWED_ROOM_NAMES.length; i++) {
                 bot.send(ALLOWED_ROOM_NAMES[i], msg);
             }
             return;
@@ -622,11 +636,21 @@ function onNotification(sbn) {
                 
                 lastDeepHoleTimeMap[deepHoleKey] = nowMillis;
 
+                // 만료된 쿨타임 키 정리 (10개 초과 시)
+                let deepHoleKeys = Object.keys(lastDeepHoleTimeMap);
+                if (deepHoleKeys.length > 10) {
+                    for (let k = 0; k < deepHoleKeys.length; k++) {
+                        if (nowMillis - lastDeepHoleTimeMap[deepHoleKeys[k]] >= 180000) {
+                            delete lastDeepHoleTimeMap[deepHoleKeys[k]];
+                        }
+                    }
+                }
+
                 let msg = "🚨심구 알림🚨 " + location + " 심구 " + count + "개 등장";
                 
                 let targets = ALERT_ROOM_MAP[server];
                 if (targets && targets.length > 0) {
-                    for (let i in targets) {
+                    for (let i = 0; i < targets.length; i++) {
                         bot.send(targets[i], msg);
                     }
                 }
@@ -635,12 +659,12 @@ function onNotification(sbn) {
         }
 
         // [기능 4] 새로운 공지사항 알림
-        if (typeof KEYWORD_NOTICE_NEW !== 'undefined' && KEYWORD_NOTICE_NEW && fullContent.includes(KEYWORD_NOTICE_NEW)) {
+        if (KEYWORD_NOTICE_NEW && fullContent.includes(KEYWORD_NOTICE_NEW)) {
             let viewMore = "\u200b".repeat(500);
             let noticeContent = (bigText.length > text.length) ? bigText : text;
             let msg = "📢 " + title + "\n" + viewMore + "\n" + noticeContent;
 
-            for (let i in ALLOWED_ROOM_NAMES) {
+            for (let i = 0; i < ALLOWED_ROOM_NAMES.length; i++) {
                 bot.send(ALLOWED_ROOM_NAMES[i], msg);
             }
         }
@@ -655,4 +679,4 @@ bot.addListener(Event.COMMAND, onCommand);
 bot.addListener(Event.MESSAGE, onMessage);
 bot.addListener(Event.NOTIFICATION_POSTED, onNotification);
 
-Log.i("마비노기봇 v2.7.3 로드 완료.");
+Log.i("마비노기봇 v2.7.4 로드 완료.");

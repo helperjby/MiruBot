@@ -190,58 +190,66 @@ async def search_image_smart(
         print(f"Search Error: {e}")
         return JSONResponse(content={"found": False, "message": "서버 내부 오류"}, status_code=500)
 
+# --- ▼▼▼ 금융 정보 전용 엔드포인트 ▼▼▼ ---
+
+@app.get("/finance/exchange", response_model=SummaryResponse)
+def get_exchange():
+    """환율 정보를 조회합니다."""
+    print("[main.py] GET /finance/exchange")
+    try:
+        info = get_exchange_rate_info()
+        return SummaryResponse(headline="현재 환율 정보", gemini_summary=info)
+    except Exception as e:
+        print(f"[main.py] /finance/exchange Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"환율 조회 오류: {str(e)}")
+
+
+@app.get("/finance/stock", response_model=SummaryResponse)
+def get_stock():
+    """증시 정보를 조회합니다."""
+    print("[main.py] GET /finance/stock")
+    try:
+        info = get_combined_stock_info()
+        return SummaryResponse(headline="주요 증시 현황", gemini_summary=info)
+    except Exception as e:
+        print(f"[main.py] /finance/stock Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"증시 조회 오류: {str(e)}")
+
+# --- ▲▲▲ 금융 정보 전용 엔드포인트 ▲▲▲ ---
+
+
 @app.post("/process-url", response_model=SummaryResponse)
 def process_url(request: MessageRequest):
-    
-    command = request.text.strip()
-    
-    # 1. 명령어 감지 (!환율)
-    if command == "!환율":
-        print("[main.py] 1. Received command: !환율")
-        print("[main.py] 2. Calling get_exchange_rate_info...")
-        info = get_exchange_rate_info()
-        print("[main.py] 3. Returning exchange rate info.")
-        return SummaryResponse(headline="현재 환율 정보", gemini_summary=info)
+    """URL이 포함된 텍스트를 받아 요약합니다."""
+    print(f"[main.py] 1. Received request: {request.text}")
+    try:
+        urls = extract_urls(request.text)
+        if not urls:
+            print("[main.py] 2. No valid URL found.")
+            raise HTTPException(status_code=400, detail="입력된 텍스트에서 유효한 URL을 찾을 수 없습니다.")
 
-    # 2. !증시 명령어 감지
-    elif command == "!증시":
-        print("[main.py] 1. Received command: !증시")
-        print("[main.py] 2. Calling get_combined_stock_info...")
-        info = get_combined_stock_info()
-        print("[main.py] 3. Returning combined stock info.")
-        return SummaryResponse(headline="주요 증시 현황", gemini_summary=info)
+        url = urls[0]
+        print(f"[main.py] 2. Extracted URL: {url}")
 
-    # 3. 기존 URL 요약 로직
-    else:
-        print(f"[main.py] 1. Received request: {request.text}")
-        try:
-            urls = extract_urls(request.text)
-            if not urls:
-                print("[main.py] 2. No valid URL found.")
-                raise HTTPException(status_code=400, detail="입력된 텍스트에서 유효한 URL을 찾을 수 없습니다.")
-            
-            url = urls[0]
-            print(f"[main.py] 2. Extracted URL: {url}")
-            
-            if "localhost" in url or "127.0.0.1" in url:
-                print("[main.py] 3. Localhost URL blocked.")
-                raise HTTPException(status_code=400, detail="내부 IP 또는 로컬 주소는 사용할 수 없습니다.")
-            
-            print("[main.py] 3. Calling process_url_content...")
-            headline, summary = process_url_content(url)
-            
-            if headline is None or summary is None:
-                print("[main.py] 4. process_url_content returned None. (Not found or failed)")
-                raise HTTPException(status_code=404, detail="요약할 수 없는 URL이거나 처리 중 오류가 발생했습니다.")
+        if "localhost" in url or "127.0.0.1" in url:
+            print("[main.py] 3. Localhost URL blocked.")
+            raise HTTPException(status_code=400, detail="내부 IP 또는 로컬 주소는 사용할 수 없습니다.")
 
-            print("[main.py] 4. Summary generated successfully.")
-            return SummaryResponse(headline=headline, gemini_summary=summary)
-        
-        except HTTPException as he:
-            raise he
-        except Exception as e:
-            print(f"URL 처리 중 심각한 오류 발생: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"서버 내부 오류 발생: {str(e)}")
+        print("[main.py] 3. Calling process_url_content...")
+        headline, summary = process_url_content(url)
+
+        if headline is None or summary is None:
+            print("[main.py] 4. process_url_content returned None. (Not found or failed)")
+            raise HTTPException(status_code=404, detail="요약할 수 없는 URL이거나 처리 중 오류가 발생했습니다.")
+
+        print("[main.py] 4. Summary generated successfully.")
+        return SummaryResponse(headline=headline, gemini_summary=summary)
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"URL 처리 중 심각한 오류 발생: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"서버 내부 오류 발생: {str(e)}")
 
 @app.post("/translate", response_model=TranslationResponse)
 def handle_translation(request: MessageRequest):

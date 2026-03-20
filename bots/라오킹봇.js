@@ -1,5 +1,5 @@
 /**
- * [라오킹 봇 - GraalJS 통합 v1.4]
+ * [라오킹 봇 - GraalJS 통합 v1.5]
  * - 환경: MessengerBot R (API2) - v0.7.40a (GraalJS) 이상
  * - 업데이트 내역:
  * v1.0: 기본 이식 (GraalJS)
@@ -7,6 +7,7 @@
  * v1.2: 고정 일정(연대기) 추가 및 공지 범위(24h) 수정
  * v1.3: [신규] 생일 관리 및 알림 기능 추가 (!생일등록, !생일제거)
  * v1.4: [수정] 주기성 이벤트 명령어에 패배/예외 기간 처리 추가
+ * v1.5: [개선] 브리핑 시스템 고도화 (!오늘, !내일), 시간순 통합 정렬, 09:00~09:00 고정 범위
  */
 
 const bot = BotManager.getCurrentBot();
@@ -101,6 +102,16 @@ const FIXED_CHRONICLE_CONFIG = [
     { name: "지배자의 영광(성전3개)", startTime: "2026-04-25T13:20:00+09:00", endTime: "2026-04-28T13:20:00+09:00" }
 ];
 
+// 1-9-1. 연대기 사전 파싱 (매 메시지마다 Date 파싱 방지)
+const FIXED_CHRONICLE = FIXED_CHRONICLE_CONFIG.map(evt => ({
+    name: evt.name,
+    startMs: new Date(evt.startTime).getTime(),
+    endMs: new Date(evt.endTime).getTime()
+}));
+
+// 1-7. 이벤트 명령어 Map (O(1) 조회)
+const EVENT_COMMAND_MAP = new Map(EVENTS_CONFIG.map(e => [e.command, e]));
+
 // 1-6. 이미지 경로 설정
 const TALENT_IMAGE_PATHS = {
     "곤잘로": ["/storage/emulated/0/msgbot_media/[크기변환]곤잘로.png"],
@@ -152,6 +163,83 @@ function findEventsInRange(config, rangeStart, rangeEnd) {
     return events;
 }
 
+/** 당일 09:00 ~ 익일 09:00 범위 계산 */
+function getDayRange(baseDate) {
+    const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 9, 0, 0, 0);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    return { start, end };
+}
+
+/** 범위 내 모든 일정을 시간순으로 수집 */
+function collectScheduleItems(rangeStart, rangeEnd) {
+    const items = [];
+    const rangeStartMs = rangeStart.getTime();
+    const rangeEndMs = rangeEnd.getTime();
+
+    // 1. 주기성 이벤트
+    EVENTS_CONFIG.forEach(config => {
+        findEventsInRange(config, rangeStart, rangeEnd).forEach(time => {
+            items.push({ timestamp: time.getTime(), label: `⚔️ ${config.name}` });
+        });
+    });
+
+    // 2. 연대기 고정 일정
+    FIXED_CHRONICLE.forEach(evt => {
+        if (evt.startMs >= rangeStartMs && evt.startMs < rangeEndMs) {
+            items.push({ timestamp: evt.startMs, label: `📜 ${evt.name} 시작` });
+        }
+        if (evt.endMs >= rangeStartMs && evt.endMs < rangeEndMs) {
+            items.push({ timestamp: evt.endMs, label: `🏁 ${evt.name} 종료` });
+        }
+    });
+
+    // 3. 단발성 이벤트
+    try {
+        const rawData = FileStream.read(ONE_TIME_EVENTS_PATH) || "[]";
+        JSON.parse(rawData).forEach(event => {
+            if (event.timestamp >= rangeStartMs && event.timestamp < rangeEndMs) {
+                items.push({ timestamp: event.timestamp, label: `📅 ${event.name}` });
+            }
+        });
+    } catch (e) { Log.e(e); }
+
+    // 시간순 정렬
+    items.sort((a, b) => a.timestamp - b.timestamp);
+
+    // 4. 생일 (rangeStart 날짜 기준)
+    let birthdayNames = [];
+    try {
+        const rawBirth = FileStream.read(BIRTHDAY_EVENTS_PATH) || "[]";
+        const birthdays = JSON.parse(rawBirth);
+        const mmdd = String(rangeStart.getMonth() + 1).padStart(2, '0') + String(rangeStart.getDate()).padStart(2, '0');
+        birthdayNames = birthdays.filter(b => b.date === mmdd).map(b => b.name);
+    } catch (e) { Log.e(e); }
+
+    return { items, birthdayNames };
+}
+
+/** 브리핑 메시지 포맷 */
+function formatBriefing(rangeStart, items, birthdayNames) {
+    const mm = String(rangeStart.getMonth() + 1).padStart(2, '0');
+    const dd = String(rangeStart.getDate()).padStart(2, '0');
+    let msg = `🔔 [${mm}/${dd} 일정]\n`;
+
+    if (items.length > 0) {
+        items.forEach(item => {
+            const timeStr = formatTimeHHMM(new Date(item.timestamp));
+            msg += `\n${timeStr}  ${item.label}`;
+        });
+    } else {
+        msg += `\n예정된 주요 일정이 없습니다.`;
+    }
+
+    if (birthdayNames.length > 0) {
+        msg += `\n\n🎂 오늘은 ${birthdayNames.join(', ')}님의 생일입니다!`;
+    }
+
+    return msg;
+}
+
 // --- 3. 기능별 핸들러 ---
 
 /** [기능 1] 공지 전파 */
@@ -163,99 +251,21 @@ function handleNoticeRelay(msg) {
     } catch (e) { Log.e(e); }
 }
 
-/** [기능 2] 일일 자동 공지 (수정됨: 생일 추가) */
+/** [기능 2] 일일 자동 공지 (09:00~익일 09:00 고정 범위) */
 function checkAndSendDailySchedule(msg) {
     if (msg.room !== DAILY_ANNOUNCE_CONFIG.ROOM_NAME) return;
-    
+
     const now = new Date();
     if (now.getHours() < DAILY_ANNOUNCE_CONFIG.ANNOUNCE_HOUR) return;
-    
+
     const todayStr = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
     const lastSentDate = FileStream.read(DAILY_ANNOUNCE_CONFIG.STATUS_FILE_PATH);
-    
     if (lastSentDate === todayStr) return;
 
-    const searchStart = new Date(now.getTime());
-    const searchEnd = new Date(now.getTime() + (24 * 60 * 60 * 1000));
-    
-    let scheduleItems = [];
+    const { start, end } = getDayRange(now);
+    const { items, birthdayNames } = collectScheduleItems(start, end);
+    const replyMsg = formatBriefing(start, items, birthdayNames);
 
-    // 1. 주기성 이벤트(폐허, 제단)
-    EVENTS_CONFIG.forEach(eventConfig => {
-        const eventsInRange = findEventsInRange(eventConfig, searchStart, searchEnd);
-        eventsInRange.forEach(time => {
-            const timeStr = formatTimeHHMM(time);
-            let prefix = "";
-            if (time.getDate() !== now.getDate()) prefix = "(익일)";
-            scheduleItems.push(`⚔️ ${eventConfig.name} ${prefix}${timeStr}`);
-        });
-    });
-
-    // 2. 연대기 고정 일정
-    FIXED_CHRONICLE_CONFIG.forEach(evt => {
-        const startMs = new Date(evt.startTime).getTime();
-        const endMs = new Date(evt.endTime).getTime();
-        
-        if (startMs >= searchStart.getTime() && startMs < searchEnd.getTime()) {
-            const timeStr = formatTimeHHMM(new Date(startMs));
-            let prefix = "";
-            if (new Date(startMs).getDate() !== now.getDate()) prefix = "(익일)";
-            scheduleItems.push(`📜 [시작] ${evt.name} ${prefix}${timeStr}`);
-        }
-        if (endMs >= searchStart.getTime() && endMs < searchEnd.getTime()) {
-            const timeStr = formatTimeHHMM(new Date(endMs));
-            let prefix = "";
-            if (new Date(endMs).getDate() !== now.getDate()) prefix = "(익일)";
-            scheduleItems.push(`🏁 [종료] ${evt.name} ${prefix}${timeStr}`);
-        }
-    });
-
-    // 3. 단발성 이벤트
-    try {
-        const rawData = FileStream.read(ONE_TIME_EVENTS_PATH) || "[]";
-        const oneTimeEvents = JSON.parse(rawData);
-        const oneTimeEventsInRange = oneTimeEvents.filter(event => {
-            return event.timestamp >= searchStart.getTime() && event.timestamp < searchEnd.getTime();
-        });
-        oneTimeEventsInRange.forEach(event => {
-            const evtTime = new Date(event.timestamp);
-            const timeStr = formatTimeHHMM(evtTime);
-            let prefix = "";
-            if (evtTime.getDate() !== now.getDate()) prefix = "(익일)";
-            scheduleItems.push(`📅 ${event.name} ${prefix}${timeStr}`);
-        });
-    } catch (e) { Log.e(e); }
-
-    // 4. [신규] 생일 체크 (오늘 날짜 기준)
-    let birthdayMsg = "";
-    try {
-        const rawBirth = FileStream.read(BIRTHDAY_EVENTS_PATH) || "[]";
-        const birthdays = JSON.parse(rawBirth);
-        // 오늘 날짜 MMDD 구하기 (예: 11월 5일 -> "1105")
-        const currentMMDD = String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
-        
-        const todayBirthdays = birthdays.filter(b => b.date === currentMMDD);
-        if (todayBirthdays.length > 0) {
-            const names = todayBirthdays.map(b => b.name).join(', ');
-            birthdayMsg = `\n🎉 오늘은 ${names}님의 생일입니다! 🎂`;
-        }
-    } catch (e) {
-        Log.e(`[생일체크] 오류: ${e}`);
-    }
-
-    // 5. 최종 메시지 전송
-    let replyMsg = `🔔 [오늘의 일정]\n`;
-    
-    if (scheduleItems.length > 0) {
-        replyMsg += `\n${scheduleItems.join('\n')}`;
-    } else {
-        replyMsg += `\n예정된 주요 일정이 없습니다.`;
-    }
-
-    if (birthdayMsg) {
-        replyMsg += `\n${birthdayMsg}`;
-    }
-    
     const success = bot.send(DAILY_ANNOUNCE_CONFIG.ROOM_NAME, replyMsg);
     if (success) {
         FileStream.write(DAILY_ANNOUNCE_CONFIG.STATUS_FILE_PATH, todayStr);
@@ -281,13 +291,15 @@ function handleGenericSchedule(cmd, config) {
         }
     }
 
-    // 2. 기존 일정 계산 로직 (기존 코드 그대로 유지)
+    // 2. 기존 일정 계산 로직 (Math.ceil로 한 번에 점프)
     const periodMs = (config.periodHours * 3600000) + ((config.periodMinutes || 0) * 60000);
     const endDate = new Date(config.endTime);
     let nextTime = new Date(config.baseTime);
-    
-    while (nextTime.getTime() < now.getTime()) {
-        nextTime.setTime(nextTime.getTime() + periodMs);
+
+    const diff = now.getTime() - nextTime.getTime();
+    if (diff > 0) {
+        const cycles = Math.ceil(diff / periodMs);
+        nextTime.setTime(nextTime.getTime() + cycles * periodMs);
     }
 
     if (nextTime.getTime() >= endDate.getTime()) {
@@ -437,8 +449,7 @@ function handleShowBirthdays(cmd) {
             return;
         }
 
-        // 3. 날짜순 정렬 (MMDD 문자열 비교)
-        birthdays.sort((a, b) => a.date.localeCompare(b.date));
+        // 3. (정렬 불필요: 등록 시 이미 날짜순 정렬됨)
 
         // 4. 메시지 포맷팅
         let msg = "🎂 [생일 목록] 🎂\n\n";
@@ -458,6 +469,22 @@ function handleShowBirthdays(cmd) {
     }
 }
 
+/** 수동 브리핑: !오늘 */
+function handleToday(cmd) {
+    const { start, end } = getDayRange(new Date());
+    const { items, birthdayNames } = collectScheduleItems(start, end);
+    cmd.reply(formatBriefing(start, items, birthdayNames));
+}
+
+/** 수동 브리핑: !내일 */
+function handleTomorrow(cmd) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const { start, end } = getDayRange(tomorrow);
+    const { items, birthdayNames } = collectScheduleItems(start, end);
+    cmd.reply(formatBriefing(start, items, birthdayNames));
+}
+
 // --- 4. 메인 이벤트 리스너 ---
 
 function onMessage(msg) {
@@ -471,15 +498,8 @@ function onCommand(cmd) {
     if (!ALLOWED_COMMAND_ROOM_IDS.includes(String(cmd.channelId))) return;
 
     try {
-        let eventFound = false;
-        for (const eventConfig of EVENTS_CONFIG) {
-            if (cmd.command === eventConfig.command) {
-                handleGenericSchedule(cmd, eventConfig);
-                eventFound = true;
-                break;
-            }
-        }
-        if (eventFound) return;
+        const eventConfig = EVENT_COMMAND_MAP.get(cmd.command);
+        if (eventConfig) { handleGenericSchedule(cmd, eventConfig); return; }
 
         switch (cmd.command) {
             // 일정 관리
@@ -492,8 +512,10 @@ function onCommand(cmd) {
             case "생일제거": handleDeleteBirthday(cmd, cmd.args.join(' ')); break;
             case "생일목록": handleShowBirthdays(cmd); break; // [추가됨]
 
-            // 유틸리티
-            
+            // 브리핑
+            case "오늘": handleToday(cmd); break;
+            case "내일": handleTomorrow(cmd); break;
+
             // 미디어 전송
             case "크븝":
                 try {
@@ -518,10 +540,11 @@ function onCommand(cmd) {
                 break;
 
             case "명령어":
-                let help = "[라오킹 봇 v1.4]\n\n";
+                let help = "[라오킹 봇 v1.5]\n\n";
                 EVENTS_CONFIG.forEach(e => help += `!${e.command} - ${e.name}\n`);
-                help += "\n[일정]\n!일정등록, !일정삭제, !일정\n!생일등록 {닉네임}, {MMDD}\n!생일제거 {닉네임}\n";
-                help += "\n[기타]\n!주둔지\n!크븝 동맹구도\n!특성 {이름}";
+                help += "\n[브리핑]\n!오늘 - 오늘의 일정\n!내일 - 내일의 일정\n";
+                help += "\n[일정]\n!일정등록, !일정삭제, !일정\n!생일등록 {닉네임}, {MMDD}\n!생일제거 {닉네임}\n!생일목록\n";
+                help += "\n[기타]\n!크븝 동맹구도\n!특성 {이름}";
                 cmd.reply(help);
                 break;
         }
@@ -532,4 +555,4 @@ function onCommand(cmd) {
 bot.addListener(Event.MESSAGE, onMessage);
 bot.setCommandPrefix("!");
 bot.addListener(Event.COMMAND, onCommand);
-Log.i("--- 라오킹봇 v1.4 로드됨 ---");
+Log.i("--- 라오킹봇 v1.5 로드됨 ---");
