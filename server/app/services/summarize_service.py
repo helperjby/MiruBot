@@ -5,7 +5,7 @@ from app.services.chat_service import get_recent_logs
 _gemini = GeminiLLM()
 
 # Gemini 입력 토큰 보호: 최대 메시지 수
-MAX_MESSAGES_FOR_SUMMARY = 300
+MAX_MESSAGES_FOR_SUMMARY = 1500
 
 
 def _format_chat_log(messages: list[dict]) -> str:
@@ -47,13 +47,19 @@ def summarize_chat(channel_id: str, hours: float = 4.0) -> dict:
 3. 중요하지 않은 인사말이나 단순 반응("ㅋㅋ", "ㅇㅇ" 등)은 생략할 것
 4. 전체 요약은 간결하게 작성할 것
 
+출력 형식 규칙 (반드시 지킬 것):
+- 마크다운 문법(**, *, #, ``` 등)을 절대 사용하지 말 것
+- 주제 구분은 "[주제명]" 형태로 표시할 것
+- 하위 항목은 "- " (대시+공백)으로 표시할 것
+- 순수 텍스트만 사용할 것
+
 --- 대화 기록 ---
 {chat_text}
 --- 대화 기록 끝 ---
 
 위 대화를 요약해주세요."""
 
-    summary = _gemini(prompt)
+    summary = _gemini.invoke(prompt)
 
     return {
         "success": True,

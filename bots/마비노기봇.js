@@ -250,26 +250,34 @@ function sendMalteseImages(channelId, count, isAutoDaily) {
     new java.lang.Thread(function() {
         try {
             let sender = new MediaSender();
-            let baseDir = "/storage/emulated/0/msgbot_media"; 
+            let baseDir = sender.getBaseDirectory();
             let apiUrl = FASTAPI_BASE_URL + "/images/random/maltese?count=" + count + "&_ts=" + Date.now();
-            
+
+            let dirFile = new File(baseDir);
+            if (!dirFile.exists()) dirFile.mkdirs();
+
             let response = Jsoup.connect(apiUrl).timeout(30000).ignoreContentType(true).execute();
             let imageUrls = JSON.parse(response.body()).urls;
-            if (!imageUrls) return;
-            
+            if (!imageUrls || imageUrls.length === 0) return;
+
             let localPaths = [];
-            imageUrls.forEach(function(url, i) {
+            for (let i = 0; i < imageUrls.length; i++) {
                 let savePath = baseDir + "/maltese_" + Date.now() + "_" + i + ".jpg";
-                let bytes = Jsoup.connect(url).timeout(30000).ignoreContentType(true).execute().bodyAsBytes();
+                let bytes = Jsoup.connect(imageUrls[i]).timeout(30000).ignoreContentType(true).maxBodySize(0).execute().bodyAsBytes();
                 let fos = new FileOutputStream(savePath);
                 fos.write(bytes);
                 fos.close();
                 localPaths.push(savePath);
-            });
+            }
 
             if (isAutoDaily) bot.send(channelId, "오늘의 말텔라그램🐶");
-            
-            let success = sender.send(channelId, localPaths);
+
+            let javaPaths = java.lang.reflect.Array.newInstance(java.lang.String, localPaths.length);
+            for (let j = 0; j < localPaths.length; j++) {
+                javaPaths[j] = localPaths[j];
+            }
+
+            let success = sender.send(channelId, javaPaths);
             if (success) {
                 java.lang.Thread.sleep(2000);
                 sender.returnToAppNow();

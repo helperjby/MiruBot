@@ -110,6 +110,7 @@ class GeminiLLM(LLM):
             print(f"[GeminiLLM Network Error] API 요청 중 예외 발생: {_sanitize_log(e)}")
             raise RuntimeError("LLM API 서버 연결에 실패했습니다.")
 
+    @property
     def _identifying_params(self):
         return {"model": "gemini-3.1-flash-lite-preview"}
 
@@ -117,7 +118,7 @@ if __name__ == "__main__":
     gemini_llm = GeminiLLM()
     prompt_text = "간단한 자기소개를 해줘."
     try:
-        response_text = gemini_llm(prompt_text)
+        response_text = gemini_llm.invoke(prompt_text)
         print(f"질문: {prompt_text}")
         print(f"답변: {response_text}")
     except Exception as e:

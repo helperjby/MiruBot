@@ -37,4 +37,4 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_user_hash ON chat_logs(user_hash);
     """)
     conn.commit()
-    print("[database] chat_logs 테이블 초기화 완료")
+    print("[database] chat_logs 테이블 준비 완료")

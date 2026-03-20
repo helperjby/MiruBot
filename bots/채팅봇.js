@@ -1,3 +1,11 @@
+// ==========================================================
+// 📋 채팅봇 버전 관리
+// ==========================================================
+// v1.0.0  2026-03-18  최초 구성 (경험치, 레벨, 추천/비추천, 닉네임 히스토리)
+// v1.1.0  2026-03-19  이벤트 핸들러 try-catch 추가 (크래시 방지)
+// v1.2.0  2026-03-19  !커뮤니티 명령어 추가 (정보/추천/비추 on/off 토글)
+// ==========================================================
+
 const bot = BotManager.getCurrentBot();
 
 // --- 👑 관리자 해시 설정 (하드코딩) ---
@@ -233,6 +241,22 @@ function onCommand(cmd) {
     let activeRooms = getActiveRooms();
     if (activeRooms.indexOf(cmd.room) === -1) return;
 
+    if (cmd.command === "커뮤니티") {
+        if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+        let settings = getCommSettings();
+        if (!settings.communityDisabledRooms) settings.communityDisabledRooms = [];
+        let idx = settings.communityDisabledRooms.indexOf(chIdStr);
+        if (idx > -1) {
+            settings.communityDisabledRooms.splice(idx, 1);
+            cmd.reply("✅ 커뮤니티 명령어(정보/추천/비추)가 활성화되었습니다.");
+        } else {
+            settings.communityDisabledRooms.push(chIdStr);
+            cmd.reply("🚫 커뮤니티 명령어(정보/추천/비추)가 비활성화되었습니다.");
+        }
+        saveCommSettings();
+        return;
+    }
+
     if (cmd.command === "추천알람") {
         if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
         let settings = getCommSettings();
@@ -246,6 +270,13 @@ function onCommand(cmd) {
         }
         saveCommSettings();
         return;
+    }
+
+    // --- 커뮤니티 명령어 비활성화 체크 ---
+    let _commCmds = ["정보", "추천", "비추"];
+    if (_commCmds.indexOf(cmd.command) !== -1) {
+        let _cs = getCommSettings();
+        if (_cs.communityDisabledRooms && _cs.communityDisabledRooms.indexOf(chIdStr) !== -1) return;
     }
 
     // 3. 유저 정보 조회
