@@ -17,13 +17,14 @@ def insert_chat_logs(messages: list[dict]) -> int:
             msg["content"],
             msg.get("log_id"),
             msg["timestamp"],
+            msg.get("source", "bot"),
         )
         for msg in messages
     ]
     conn.executemany(
         """INSERT INTO chat_logs
-           (channel_id, room_name, user_hash, user_name, content, log_id, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+           (channel_id, room_name, user_hash, user_name, content, log_id, timestamp, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         rows,
     )
     conn.commit()
