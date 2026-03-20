@@ -31,10 +31,12 @@ def init_db():
             content     TEXT NOT NULL,
             log_id      TEXT,
             timestamp   INTEGER NOT NULL,
+            source      TEXT DEFAULT 'bot',
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_channel_time ON chat_logs(channel_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_user_hash ON chat_logs(user_hash);
+        CREATE INDEX IF NOT EXISTS idx_source ON chat_logs(source);
     """)
     conn.commit()
     print("[database] chat_logs 테이블 준비 완료")
