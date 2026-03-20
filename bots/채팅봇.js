@@ -4,6 +4,11 @@
 // v1.0.0  2026-03-18  최초 구성 (경험치, 레벨, 추천/비추천, 닉네임 히스토리)
 // v1.1.0  2026-03-19  이벤트 핸들러 try-catch 추가 (크래시 방지)
 // v1.2.0  2026-03-19  !커뮤니티 명령어 추가 (정보/추천/비추 on/off 토글)
+// v1.3.0  2026-03-20  전체 최적화
+//   - Date 유틸 통합 (formatDate/formatDateTime), onMessage 내 Date 객체 1회 생성
+//   - findUser 정규화 맵 사전 구축으로 반복 replace 제거
+//   - 채팅 카운트를 comm_db._meta에 통합 (countCache/saveCounters/COUNT_FILE 제거)
+//   - indexOf → includes 전환, JSON compact 저장, 레거시 마이그레이션 코드 제거
 // ==========================================================
 
 const bot = BotManager.getCurrentBot();
@@ -24,65 +29,55 @@ const VOTE_BLOCKED_HASHES = [
 const MAX_UPVOTES_PER_DAY = 1;   // 하루에 가능한 추천 횟수
 const MAX_DOWNVOTES_PER_DAY = 1; // 하루에 가능한 비추천 횟수
 
+// --- 커뮤니티 명령어 목록 (함수 외부 상수) ---
+const COMMUNITY_COMMANDS = ["정보", "추천", "비추"];
+
 // --- 파일 경로 설정 ---
 const CONFIG_PATH = "sdcard/bot/active_rooms.json";
-const COUNT_FILE = "sdcard/bot/chat_counts.json";
-// ⭐ [수정 #4] 닉네임 히스토리 파일 경로를 채널별로 분리 (기존 전역 파일 경로는 마이그레이션용으로 보존)
-const NICK_HISTORY_FILE_LEGACY = "sdcard/bot/nickname_history.json";
 const COMM_SETTINGS_FILE = "sdcard/bot/comm_settings.json";
 
 // --- 전역 인메모리 캐시 ---
-let countCache = null;
-let commCache = {}; 
-let saveCounters = {}; 
-let commSettings = null; 
-let activeRoomsCache = null;   // ⭐ [수정 #7] 활성 방 목록 캐시
-let nickHistoryCache = {};     // ⭐ [수정 #6] 닉네임 히스토리 채널별 캐시
+let commCache = {};
+let commSettings = null;
+let activeRoomsCache = null;
+let nickHistoryCache = {};
 
 // ==========================================================
 // 🛠️ 기본 헬퍼 함수
 // ==========================================================
 function isAdmin(hash) {
-    if (!hash) return false;
-    return ADMIN_HASHES.indexOf(hash) !== -1;
+    return !!hash && ADMIN_HASHES.includes(hash);
 }
 
-// ⭐ [수정 #7] 활성 방 목록 - 인메모리 캐시 적용
 function getActiveRooms() {
     if (activeRoomsCache !== null) return activeRoomsCache;
-    let data = FileStream.read(CONFIG_PATH); 
+    let data = FileStream.read(CONFIG_PATH);
     if (!data) { activeRoomsCache = []; return []; }
     try { activeRoomsCache = JSON.parse(data); } catch(e) { activeRoomsCache = []; }
     return activeRoomsCache;
 }
-function saveActiveRooms(rooms) { 
-    activeRoomsCache = rooms; // 캐시도 함께 갱신
-    FileStream.write(CONFIG_PATH, JSON.stringify(rooms)); 
+
+function saveActiveRooms(rooms) {
+    activeRoomsCache = rooms;
+    FileStream.write(CONFIG_PATH, JSON.stringify(rooms));
 }
 
-// 날짜 포맷 (YYYY-MM-DD) - 자정 리셋 및 기록용
-function getTodayStr() {
-    let d = new Date();
+// --- 날짜/시간 유틸 (Date 객체를 받아 재사용) ---
+function formatDate(d) {
     let y = d.getFullYear();
     let m = ("0" + (d.getMonth() + 1)).slice(-2);
-    let date = ("0" + d.getDate()).slice(-2);
-    return y + "-" + m + "-" + date;
+    let day = ("0" + d.getDate()).slice(-2);
+    return y + "-" + m + "-" + day;
 }
 
-// ⭐ [신규] 날짜+시간 포맷 (YYYY-MM-DD HH:mm:ss) - 마지막 채팅 기록용
-function getDateTimeStr() {
-    let d = new Date();
-    let y = d.getFullYear();
-    let m = ("0" + (d.getMonth() + 1)).slice(-2);
-    let date = ("0" + d.getDate()).slice(-2);
+function formatDateTime(d) {
     let h = ("0" + d.getHours()).slice(-2);
     let min = ("0" + d.getMinutes()).slice(-2);
     let s = ("0" + d.getSeconds()).slice(-2);
-    return y + "-" + m + "-" + date + " " + h + ":" + min + ":" + s;
+    return formatDate(d) + " " + h + ":" + min + ":" + s;
 }
 
-// ⭐ [수정 #4, #6] 닉네임 히스토리 - 채널 기반 + 인메모리 캐시
-// 최초 로드 시 기존 전역 파일에서 해당 채널 유저 데이터를 마이그레이션
+// --- 닉네임 히스토리 (채널 기반 + 인메모리 캐시) ---
 function getNickHistoryPath(channelId) {
     return "sdcard/bot/nick_history_" + String(channelId) + ".json";
 }
@@ -93,34 +88,19 @@ function getNickHistory(channelId) {
 
     let path = getNickHistoryPath(chIdStr);
     let data = FileStream.read(path);
-    
+
     if (data) {
-        try { nickHistoryCache[chIdStr] = JSON.parse(data); } 
+        try { nickHistoryCache[chIdStr] = JSON.parse(data); }
         catch(e) { nickHistoryCache[chIdStr] = {}; }
     } else {
-        // ⭐ 마이그레이션: 채널별 파일이 없으면, 기존 전역 파일에서 해당 채널 유저만 추출
         nickHistoryCache[chIdStr] = {};
-        let db = getCommDb(chIdStr); // 해당 채널에 존재하는 해시 목록
-        let legacyData = FileStream.read(NICK_HISTORY_FILE_LEGACY);
-        if (legacyData) {
-            try {
-                let legacyObj = JSON.parse(legacyData);
-                for (let h in legacyObj) {
-                    if (db[h]) { // 해당 채널 DB에 있는 유저만 가져옴
-                        nickHistoryCache[chIdStr][h] = legacyObj[h];
-                    }
-                }
-                // 마이그레이션 결과 즉시 저장
-                FileStream.write(path, JSON.stringify(nickHistoryCache[chIdStr], null, 2));
-            } catch(e) { /* 파싱 실패 시 빈 객체로 시작 */ }
-        }
     }
     return nickHistoryCache[chIdStr];
 }
 
-function saveNickHistory(channelId) { 
+function saveNickHistory(channelId) {
     let chIdStr = String(channelId);
-    FileStream.write(getNickHistoryPath(chIdStr), JSON.stringify(nickHistoryCache[chIdStr], null, 2)); 
+    FileStream.write(getNickHistoryPath(chIdStr), JSON.stringify(nickHistoryCache[chIdStr]));
 }
 
 // ==========================================================
@@ -129,19 +109,22 @@ function saveNickHistory(channelId) {
 function getCommSettings() {
     if (!commSettings) {
         let data = FileStream.read(COMM_SETTINGS_FILE);
-        try { commSettings = data ? JSON.parse(data) : { voteReplyRooms: [] }; } 
+        try { commSettings = data ? JSON.parse(data) : { voteReplyRooms: [] }; }
         catch(e) { commSettings = { voteReplyRooms: [] }; }
     }
     return commSettings;
 }
-function saveCommSettings() { FileStream.write(COMM_SETTINGS_FILE, JSON.stringify(commSettings)); }
+
+function saveCommSettings() {
+    FileStream.write(COMM_SETTINGS_FILE, JSON.stringify(commSettings));
+}
 
 function getCommDb(channelId) {
     let chIdStr = String(channelId);
     if (!commCache[chIdStr]) {
         let path = "sdcard/bot/comm_db_" + chIdStr + ".json";
         let data = FileStream.read(path);
-        try { commCache[chIdStr] = data ? JSON.parse(data) : {}; } 
+        try { commCache[chIdStr] = data ? JSON.parse(data) : {}; }
         catch (e) { commCache[chIdStr] = {}; }
     }
     return commCache[chIdStr];
@@ -150,7 +133,14 @@ function getCommDb(channelId) {
 function saveCommDb(channelId) {
     let chIdStr = String(channelId);
     let path = "sdcard/bot/comm_db_" + chIdStr + ".json";
-    FileStream.write(path, JSON.stringify(commCache[chIdStr], null, 2));
+    FileStream.write(path, JSON.stringify(commCache[chIdStr]));
+}
+
+// --- 채팅 카운트 메타 (comm_db 내 _meta 키로 통합) ---
+function getChannelMeta(channelId) {
+    let db = getCommDb(channelId);
+    if (!db._meta) db._meta = { date: "", msgCount: 0, saveCounter: 0 };
+    return db._meta;
 }
 
 function getXpForNextLevel(level) { return (level * 200) + 50; }
@@ -161,47 +151,51 @@ function createProgressBar(current, max) {
     return '■'.repeat(filledCount) + '□'.repeat(10 - filledCount);
 }
 
-// ⭐ [수정 #2] findUser - 정확 일치 우선 반환 로직 추가
+// --- findUser: 정규화 맵을 사전 구축하여 반복 replace 제거 ---
 function findUser(channelId, searchName) {
     let db = getCommDb(channelId);
-    let history = getNickHistory(channelId); // ⭐ [수정 #4] 채널 기반
+    let history = getNickHistory(channelId);
     let normSearch = searchName.replace(/\s/g, "");
 
-    // 해시값 직접 매칭 (기존)
+    // 해시값 직접 매칭
     if (db[searchName]) return { hash: searchName, data: db[searchName] };
 
-    // --- [수정 #2] 1단계: 현재 닉네임 정확 일치 ---
+    // 정규화된 현재 이름 맵 구축 (1회)
+    let normNameMap = {};
     for (let h in db) {
-        if (db[h].name && db[h].name.replace(/\s/g, "") === normSearch) {
-            return { hash: h, data: db[h] };
-        }
+        if (h === "_meta" || !db[h].name) continue;
+        normNameMap[h] = db[h].name.replace(/\s/g, "");
     }
 
-    // --- [수정 #2] 2단계: 현재 닉네임 부분 일치 ---
-    for (let h in db) {
-        if (db[h].name && db[h].name.replace(/\s/g, "").includes(normSearch)) {
-            return { hash: h, data: db[h] };
-        }
+    // 1단계: 현재 닉네임 정확 일치
+    for (let h in normNameMap) {
+        if (normNameMap[h] === normSearch) return { hash: h, data: db[h] };
     }
 
-    // --- [수정 #2] 3단계: 닉네임 히스토리 정확 일치 ---
+    // 2단계: 현재 닉네임 부분 일치
+    for (let h in normNameMap) {
+        if (normNameMap[h].includes(normSearch)) return { hash: h, data: db[h] };
+    }
+
+    // 정규화된 히스토리 맵 구축 (1회)
+    let normHistMap = {};
     for (let h in history) {
-        let hasExact = history[h].some(function(item) {
-            let nameStr = (typeof item === "string") ? item : item.name;
-            return nameStr.replace(/\s/g, "") === normSearch;
+        if (!db[h]) continue;
+        normHistMap[h] = history[h].map(function(item) {
+            return ((typeof item === "string") ? item : item.name).replace(/\s/g, "");
         });
-        if (hasExact && db[h]) {
+    }
+
+    // 3단계: 닉네임 히스토리 정확 일치
+    for (let h in normHistMap) {
+        if (normHistMap[h].some(function(n) { return n === normSearch; })) {
             return { hash: h, data: db[h] };
         }
     }
 
-    // --- [수정 #2] 4단계: 닉네임 히스토리 부분 일치 ---
-    for (let h in history) {
-        let hasMatch = history[h].some(function(item) {
-            let nameStr = (typeof item === "string") ? item : item.name;
-            return nameStr.replace(/\s/g, "").includes(normSearch);
-        });
-        if (hasMatch && db[h]) {
+    // 4단계: 닉네임 히스토리 부분 일치
+    for (let h in normHistMap) {
+        if (normHistMap[h].some(function(n) { return n.includes(normSearch); })) {
             return { hash: h, data: db[h] };
         }
     }
@@ -219,7 +213,7 @@ function onCommand(cmd) {
     if (cmd.command === "활성화") {
         if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
         let rooms = getActiveRooms();
-        if (rooms.indexOf(cmd.room) === -1) {
+        if (!rooms.includes(cmd.room)) {
             rooms.push(cmd.room);
             saveActiveRooms(rooms);
             cmd.reply("✅ [" + cmd.room + "] 활성화 완료");
@@ -239,7 +233,7 @@ function onCommand(cmd) {
     }
 
     let activeRooms = getActiveRooms();
-    if (activeRooms.indexOf(cmd.room) === -1) return;
+    if (!activeRooms.includes(cmd.room)) return;
 
     if (cmd.command === "커뮤니티") {
         if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
@@ -273,10 +267,9 @@ function onCommand(cmd) {
     }
 
     // --- 커뮤니티 명령어 비활성화 체크 ---
-    let _commCmds = ["정보", "추천", "비추"];
-    if (_commCmds.indexOf(cmd.command) !== -1) {
+    if (COMMUNITY_COMMANDS.includes(cmd.command)) {
         let _cs = getCommSettings();
-        if (_cs.communityDisabledRooms && _cs.communityDisabledRooms.indexOf(chIdStr) !== -1) return;
+        if (_cs.communityDisabledRooms && _cs.communityDisabledRooms.includes(chIdStr)) return;
     }
 
     // 3. 유저 정보 조회
@@ -306,14 +299,13 @@ function onCommand(cmd) {
         reply += "🌟 인기도 : " + pop + " (👍" + (u.upvotes||0) + " / 👎" + (u.downvotes||0) + ")\n";
         reply += "🗓️ 마지막 채팅 : " + lastSeenDate + "\n";
 
-        // ⭐ [수정 #4] 채널 기반 닉네임 히스토리 조회
         let hist = getNickHistory(chIdStr)[found.hash];
         if (hist && hist.length > 0) {
             reply += "\n📜 닉네임 변경 내역\n";
-            let reversedHist = hist.slice().reverse(); 
-            let recentHist = reversedHist.slice(0, 5); 
-            
-            for(let i=0; i<recentHist.length; i++) { 
+            let reversedHist = hist.slice().reverse();
+            let recentHist = reversedHist.slice(0, 5);
+
+            for (let i = 0; i < recentHist.length; i++) {
                 let hItem = recentHist[i];
                 if (typeof hItem === "string") {
                     reply += "* " + hItem + "  (날짜 없음)\n";
@@ -330,7 +322,7 @@ function onCommand(cmd) {
         let rawArgs = cmd.args.join(" ");
         let parts = rawArgs.split(",");
         if (parts.length < 2) return cmd.reply("❌ 사용법: !정보입력 [닉네임], [특징 내용]");
-        
+
         let targetName = parts[0].trim();
         let feature = parts.slice(1).join(",").trim();
 
@@ -340,20 +332,20 @@ function onCommand(cmd) {
 
         let u = found.data;
         if (!u.features) u.features = [];
-        if (u.features.indexOf(feature) !== -1) return cmd.reply("❌ 이미 등록된 특징입니다.");
+        if (u.features.includes(feature)) return cmd.reply("❌ 이미 등록된 특징입니다.");
 
         u.features.push(feature);
-        saveCommDb(chIdStr); 
+        saveCommDb(chIdStr);
         cmd.reply("✅ [" + u.name + "] 님에게 '" + feature + "' 특징 추가 완료!");
         return;
     }
 
-    // 5. 추천 / 비추천 시스템 (⭐ 횟수 변수 조절 방식)
+    // 5. 추천 / 비추천 시스템
     if (cmd.command === "추천" || cmd.command === "비추") {
         let targetName = cmd.args.join(" ");
         if (!targetName) return cmd.reply("❌ 사용법: !" + cmd.command + " [닉네임]");
 
-        if (VOTE_BLOCKED_HASHES.indexOf(cmd.author.hash) !== -1) {
+        if (VOTE_BLOCKED_HASHES.includes(cmd.author.hash)) {
             return cmd.reply("❌ 추천/비추천 사용이 제한된 계정입니다.");
         }
 
@@ -366,18 +358,8 @@ function onCommand(cmd) {
         if (found.hash === cmd.author.hash) return cmd.reply("❌ 자신에게는 투표할 수 없습니다.");
 
         let targetUser = found.data;
-        let today = getTodayStr();
+        let today = formatDate(new Date());
         let isUpvote = (cmd.command === "추천");
-
-        // ⭐ 이전 버전(날짜만 기록) 데이터 호환성 처리
-        if (commander.lastUpvoteDate && !commander.upvoteDate) {
-            commander.upvoteDate = commander.lastUpvoteDate;
-            commander.upvoteCount = (commander.lastUpvoteDate === today) ? 1 : 0;
-        }
-        if (commander.lastDownvoteDate && !commander.downvoteDate) {
-            commander.downvoteDate = commander.lastDownvoteDate;
-            commander.downvoteCount = (commander.lastDownvoteDate === today) ? 1 : 0;
-        }
 
         if (commander.upvoteDate !== today) {
             commander.upvoteDate = today;
@@ -405,7 +387,7 @@ function onCommand(cmd) {
         saveCommDb(chIdStr);
 
         let settings = getCommSettings();
-        if (settings.voteReplyRooms.indexOf(chIdStr) !== -1) {
+        if (settings.voteReplyRooms.includes(chIdStr)) {
             cmd.reply("✅ [" + targetUser.name + "] 님을 " + (isUpvote ? "추천" : "비추천") + " 했습니다.");
         }
         return;
@@ -418,22 +400,27 @@ function onCommand(cmd) {
 // ==========================================================
 // 🔔 메시지 핸들러 (API2)
 // ==========================================================
-function onMessage(msg) { 
+function onMessage(msg) {
     try {
         let activeRooms = getActiveRooms();
-        if (activeRooms.indexOf(msg.room) === -1) return;
+        if (!activeRooms.includes(msg.room)) return;
 
         let hash = msg.author.hash;
         let currentName = msg.author.name;
         let chIdStr = String(msg.channelId);
 
-        if (!hash) return; 
+        if (!hash) return;
 
-        // 1. 닉네임 로직 (⭐ [수정 #4, #6] 채널 기반 + 캐시)
+        // Date 객체 1회 생성, 날짜/시간 모두 파생
+        let now = new Date();
+        let todayStr = formatDate(now);
+        let dateTimeStr = formatDateTime(now);
+
+        // 1. 닉네임 로직
         let historyObj = getNickHistory(chIdStr);
-        if (!historyObj[hash]) historyObj[hash] = []; 
+        if (!historyObj[hash]) historyObj[hash] = [];
         let len = historyObj[hash].length;
-        
+
         let lastRecordedName = "";
         if (len > 0) {
             let lastItem = historyObj[hash][len - 1];
@@ -441,39 +428,39 @@ function onMessage(msg) {
         }
 
         if (len === 0 || lastRecordedName !== currentName) {
-            historyObj[hash].push({ name: currentName, date: getTodayStr() });
-            saveNickHistory(chIdStr); // ⭐ 캐시 내용을 파일에 저장
+            historyObj[hash].push({ name: currentName, date: todayStr });
+            saveNickHistory(chIdStr);
         }
 
         // 2. XP 및 유저 정보 업데이트 로직
         let cDb = getCommDb(chIdStr);
         let user = cDb[hash];
         if (!user) {
-            user = { 
-                name: currentName, xp: 0, totalXp: 0, level: 1, 
-                upvotes: 0, downvotes: 0, features: [], 
-                lastSeen: getDateTimeStr()
+            user = {
+                name: currentName, xp: 0, totalXp: 0, level: 1,
+                upvotes: 0, downvotes: 0, features: [],
+                lastSeen: dateTimeStr
             };
             cDb[hash] = user;
         } else {
-            user.name = currentName; 
-            user.lastSeen = getDateTimeStr();
+            user.name = currentName;
+            user.lastSeen = dateTimeStr;
         }
 
         let content = msg.content;
         let bonusXp = 0;
 
-        if (content.indexOf("선착순 선물게임을 시작합니다!") !== -1) {
+        if (content.includes("선착순 선물게임을 시작합니다!")) {
             let match = content.match(/선착순\s*(\d+)명에게!/);
             if (match && match[1]) bonusXp = parseInt(match[1], 10) * 20;
-        } 
-        else if (content.indexOf("퀴즈 선물게임을 시작합니다!") !== -1) {
+        }
+        else if (content.includes("퀴즈 선물게임을 시작합니다!")) {
             let match = content.match(/정답자\s*(\d+)명에게!/);
             if (match && match[1]) bonusXp = parseInt(match[1], 10) * 20;
         }
 
         user.xp += (1 + bonusXp);
-        if (!user.totalXp) user.totalXp = 0; // 기존 유저 호환
+        if (!user.totalXp) user.totalXp = 0;
         user.totalXp += (1 + bonusXp);
         let leveledUp = false;
 
@@ -481,43 +468,28 @@ function onMessage(msg) {
             user.xp -= getXpForNextLevel(user.level);
             user.level++;
             leveledUp = true;
-            // msg.reply("🎉 [" + user.name + "] 님이 " + user.level + "레벨을 달성했습니다!");
         }
 
-        if (!saveCounters[chIdStr]) saveCounters[chIdStr] = 0;
-        saveCounters[chIdStr]++;
-        if (saveCounters[chIdStr] % 10 === 0 || leveledUp || bonusXp > 0) {
+        // 3. 채팅 카운트 (comm_db._meta 통합)
+        let meta = getChannelMeta(chIdStr);
+        if (meta.date !== todayStr) {
+            meta.date = todayStr;
+            meta.msgCount = 0;
+        }
+        meta.msgCount++;
+        meta.saveCounter++;
+
+        if (meta.saveCounter >= 10 || leveledUp || bonusXp > 0) {
+            meta.saveCounter = 0;
             saveCommDb(chIdStr);
         }
 
-        // 3. 채팅 카운트 로직
-        let today = getTodayStr();
-        if (!countCache) {
-            let dataStr = FileStream.read(COUNT_FILE);
-            try { countCache = dataStr ? JSON.parse(dataStr) : {}; } 
-            catch (e) { countCache = {}; }
-        }
-
-        if (countCache.date !== today) {
-            countCache = { date: today, rooms: {} };
-            FileStream.write(COUNT_FILE, JSON.stringify(countCache));
-        }
-
-        if (!countCache.rooms[msg.room]) countCache.rooms[msg.room] = 0;
-        countCache.rooms[msg.room]++;
-        let currentCount = countCache.rooms[msg.room];
-
-        // ⭐ [수정 #8] 저장 간격 10 → 5건으로 축소
-        if (currentCount % 5 === 0) {
-            FileStream.write(COUNT_FILE, JSON.stringify(countCache)); 
-        }
-
-        if (currentCount > 0 && currentCount % 100 === 0) {
-            msg.reply("오늘 " + currentCount + "번째 채팅 돌파!"); 
+        if (meta.msgCount > 0 && meta.msgCount % 100 === 0) {
+            msg.reply("오늘 " + meta.msgCount + "번째 채팅 돌파!");
         }
 
     } catch (e) {
-        Log.e("ChatBot Error: " + e); 
+        Log.e("ChatBot Error: " + e);
     }
 }
 
