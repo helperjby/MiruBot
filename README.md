@@ -82,6 +82,51 @@ python3 scripts/migrate_json_hashes.py --bot-dir /path/to/sdcard/bot
 python3 scripts/migrate_json_hashes.py --bot-dir /path/to/sdcard/bot --execute
 ```
 
+## 로깅
+
+### 로그 형식
+
+메신저봇R은 각 봇의 로그를 `sdcard/msgbot/Bots/{봇이름}/log.json`에 JSON 배열로 저장합니다.
+
+```json
+{"a": "로그 메시지", "b": 1, "c": "2026/03/21 15:17:21"}
+```
+
+| 키 | 설명 |
+| ---- | ------ |
+| `a` | 로그 메시지 |
+| `b` | 로그 레벨 (1=Info, 2=Debug, 3=Error) |
+| `c` | 타임스탬프 |
+
+### 로그 프리픽스 규칙
+
+모든 봇은 `[봇이름]` 프리픽스를 사용하여 로그 출처를 식별합니다.
+
+```text
+[관리봇] 채팅봇 봇 켜기 (by 홍길동)
+[API] /translate HTTP 오류: 500 - ...
+[마비노기봇] onCommand 오류 (!랭킹): TypeError ...
+```
+
+### 로그 조회
+
+관리봇의 `!로그` 명령어로 각 봇의 최근 로그를 조회할 수 있습니다.
+
+```text
+!로그              → 관리봇 최근 10건
+!로그 채팅봇        → 채팅봇 최근 10건
+!로그 요약봇 20     → 요약봇 최근 20건 (최대 30건)
+```
+
+출력 예시:
+
+```text
+--- 요약봇 최근 로그 (10건) ---
+[D][15:17:21] [요약봇] 배치 flush 시작: 1건
+[D][15:17:21] [요약봇] 배치 flush 완료: 1건 저장
+[E][15:25:48] [요약봇] 통계 API 실패: HTTP 500
+```
+
 ## 실행 방법
 
 ### 서버 (Raspberry Pi)
