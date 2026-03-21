@@ -55,6 +55,33 @@ MiruBot/
 | 인프라 | Raspberry Pi / Docker Compose |
 | 데이터 동기화 | OneDrive (crontab) |
 
+## DB 관리
+
+### 채팅 로그 DB
+
+- SQLite (`server/data/chat.db`)
+- 2025-01-01 이후 데이터만 보존 (이전 데이터 삭제됨)
+- `user_hash`는 12자로 truncate하여 저장 (용량 최적화)
+
+### 마이그레이션 스크립트
+
+| 스크립트 | 용도 |
+|----------|------|
+| `server/scripts/optimize_db.py` | DB 데이터 정리 + hash truncate + VACUUM |
+| `server/scripts/migrate_json_hashes.py` | 봇 JSON 파일의 hash 키 12자 변환 |
+| `server/scripts/migrate_eml.py` | .eml 파일에서 채팅 이력 가져오기 |
+
+```bash
+# DB 최적화 (dry-run 먼저 확인 후 --execute)
+cd server
+sudo python3 scripts/optimize_db.py
+sudo python3 scripts/optimize_db.py --execute
+
+# 봇 JSON 파일 해시 마이그레이션
+python3 scripts/migrate_json_hashes.py --bot-dir /path/to/sdcard/bot
+python3 scripts/migrate_json_hashes.py --bot-dir /path/to/sdcard/bot --execute
+```
+
 ## 실행 방법
 
 ### 서버 (Raspberry Pi)

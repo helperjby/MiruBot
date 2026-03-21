@@ -209,7 +209,7 @@ bot.addListener(Event.MESSAGE, function (msg) {
 
         // DB 기록이 활성화된 방만 버퍼에 저장
         if (!isDbEnabled(channelId)) return;
-        let userHash = msg.author.hash || null;
+        let userHash = msg.author.hash ? msg.author.hash.substring(0, 12) : null;
         let userName = msg.author.name;
         let roomName = msg.room;
         let content = msg.content;

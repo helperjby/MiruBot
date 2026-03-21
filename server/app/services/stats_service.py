@@ -113,10 +113,10 @@ def calculate_stats(channel_id: str, user_hash: str) -> dict:
     general = conn.execute(
         """SELECT
                COUNT(*) AS total,
-               SUM(CASE WHEN content LIKE '%을 보냈습니다%' THEN 1 ELSE 0 END) AS emoticon,
+               SUM(CASE WHEN content LIKE '%을 보냈습니다%' OR content = '이모티콘' THEN 1 ELSE 0 END) AS emoticon,
                SUM(CASE WHEN content LIKE 'http://%' OR content LIKE 'https://%' THEN 1 ELSE 0 END) AS url,
                SUM(CASE WHEN timestamp >= ? THEN 1 ELSE 0 END) AS today_total,
-               SUM(CASE WHEN timestamp >= ? AND content LIKE '%을 보냈습니다%' THEN 1 ELSE 0 END) AS today_emoticon,
+               SUM(CASE WHEN timestamp >= ? AND (content LIKE '%을 보냈습니다%' OR content = '이모티콘') THEN 1 ELSE 0 END) AS today_emoticon,
                SUM(CASE WHEN timestamp >= ? AND (content LIKE 'http://%' OR content LIKE 'https://%') THEN 1 ELSE 0 END) AS today_url
            FROM chat_logs
            WHERE channel_id = ? AND user_hash = ?""",
@@ -309,7 +309,8 @@ def get_chat_stats(channel_id: str, nickname: str) -> dict:
 
     # 4) 최종 텍스트 조합
     header = f"{user_name}님의 활동 통계입니다."
-    full_text = f"{header}\n\n{stats_text}"
+    notice = "(2025년 1월 이후 데이터 기준)"
+    full_text = f"{header}\n{notice}\n\n{stats_text}"
 
     return {
         "success": True,

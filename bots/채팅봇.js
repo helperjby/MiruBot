@@ -15,9 +15,9 @@ const bot = BotManager.getCurrentBot();
 
 // --- 👑 관리자 해시 설정 (하드코딩) ---
 const ADMIN_HASHES = [
-    "e5a0e976d576ac81e83c32d98441d8eb1fa84fcf6598af66845ef9ae1fcede87",
-    "94c9c06f8ad592f0c4bbc2d75f8567d6b0ba2e3d40f32fe41ea94711ac23f27d",
-    "fe711d5acfa6e2ccf570dc0278bdb81607e63e4f17d72b0503499b7626d8c2ed"
+    "e5a0e976d576",
+    "94c9c06f8ad5",
+    "fe711d5acfa6"
 ];
 
 // --- 🚫 추천/비추천 사용 금지 해시 목록 ---
@@ -45,8 +45,12 @@ let nickHistoryCache = {};
 // ==========================================================
 // 🛠️ 기본 헬퍼 함수
 // ==========================================================
+function truncHash(h) {
+    return h ? h.substring(0, 12) : null;
+}
+
 function isAdmin(hash) {
-    return !!hash && ADMIN_HASHES.includes(hash);
+    return !!hash && ADMIN_HASHES.includes(truncHash(hash));
 }
 
 function getActiveRooms() {
@@ -209,9 +213,10 @@ function findUser(channelId, searchName) {
 function onCommand(cmd) {
     try {
     let chIdStr = String(cmd.channelId);
+    let cmdHash = truncHash(cmd.author.hash);
 
     if (cmd.command === "활성화") {
-        if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+        if (!isAdmin(cmdHash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
         let rooms = getActiveRooms();
         if (!rooms.includes(cmd.room)) {
             rooms.push(cmd.room);
@@ -221,7 +226,7 @@ function onCommand(cmd) {
         return;
     }
     if (cmd.command === "비활성화") {
-        if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+        if (!isAdmin(cmdHash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
         let rooms = getActiveRooms();
         let index = rooms.indexOf(cmd.room);
         if (index !== -1) {
@@ -236,7 +241,7 @@ function onCommand(cmd) {
     if (!activeRooms.includes(cmd.room)) return;
 
     if (cmd.command === "커뮤니티") {
-        if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+        if (!isAdmin(cmdHash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
         let settings = getCommSettings();
         if (!settings.communityDisabledRooms) settings.communityDisabledRooms = [];
         let idx = settings.communityDisabledRooms.indexOf(chIdStr);
@@ -252,7 +257,7 @@ function onCommand(cmd) {
     }
 
     if (cmd.command === "추천알람") {
-        if (!isAdmin(cmd.author.hash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+        if (!isAdmin(cmdHash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
         let settings = getCommSettings();
         let idx = settings.voteReplyRooms.indexOf(chIdStr);
         if (idx > -1) {
@@ -275,7 +280,7 @@ function onCommand(cmd) {
     // 3. 유저 정보 조회
     if (cmd.command === "정보") {
         let targetName = cmd.args.join(" ");
-        let userHash = cmd.author.hash;
+        let userHash = cmdHash;
         let found = null;
 
         if (!targetName) {
@@ -328,7 +333,7 @@ function onCommand(cmd) {
 
         let found = findUser(chIdStr, targetName);
         if (!found) return cmd.reply("❌ 대상 유저를 찾을 수 없습니다.");
-        if (found.hash === cmd.author.hash) return cmd.reply("❌ 자신의 특징은 스스로 추가할 수 없습니다.");
+        if (found.hash === cmdHash) return cmd.reply("❌ 자신의 특징은 스스로 추가할 수 없습니다.");
 
         let u = found.data;
         if (!u.features) u.features = [];
@@ -345,17 +350,17 @@ function onCommand(cmd) {
         let targetName = cmd.args.join(" ");
         if (!targetName) return cmd.reply("❌ 사용법: !" + cmd.command + " [닉네임]");
 
-        if (VOTE_BLOCKED_HASHES.includes(cmd.author.hash)) {
+        if (VOTE_BLOCKED_HASHES.includes(cmdHash)) {
             return cmd.reply("❌ 추천/비추천 사용이 제한된 계정입니다.");
         }
 
         let db = getCommDb(chIdStr);
-        let commander = db[cmd.author.hash];
+        let commander = db[cmdHash];
         if (!commander) return cmd.reply("❌ 정보가 없습니다. (채팅을 한 번 이상 치면 활성화됩니다.)");
 
         let found = findUser(chIdStr, targetName);
         if (!found) return cmd.reply("❌ 대상 유저를 찾을 수 없습니다.");
-        if (found.hash === cmd.author.hash) return cmd.reply("❌ 자신에게는 투표할 수 없습니다.");
+        if (found.hash === cmdHash) return cmd.reply("❌ 자신에게는 투표할 수 없습니다.");
 
         let targetUser = found.data;
         let today = formatDate(new Date());
@@ -405,7 +410,7 @@ function onMessage(msg) {
         let activeRooms = getActiveRooms();
         if (!activeRooms.includes(msg.room)) return;
 
-        let hash = msg.author.hash;
+        let hash = truncHash(msg.author.hash);
         let currentName = msg.author.name;
         let chIdStr = String(msg.channelId);
 

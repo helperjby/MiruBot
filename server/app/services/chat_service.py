@@ -8,11 +8,12 @@ def insert_chat_logs(messages: list[dict]) -> int:
         return 0
 
     conn = get_connection()
+    HASH_LEN = 12
     rows = [
         (
             msg["channel_id"],
             msg.get("room_name"),
-            msg.get("user_hash"),
+            msg.get("user_hash", "")[:HASH_LEN] if msg.get("user_hash") else None,
             msg.get("user_name"),
             msg["content"],
             msg.get("log_id"),
