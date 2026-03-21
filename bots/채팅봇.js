@@ -221,6 +221,7 @@ function onCommand(cmd) {
         if (!rooms.includes(cmd.room)) {
             rooms.push(cmd.room);
             saveActiveRooms(rooms);
+            Log.i("[채팅봇] 방 활성화: " + cmd.room + " (by " + cmd.author.name + ")");
             cmd.reply("✅ [" + cmd.room + "] 활성화 완료");
         } else cmd.reply("이미 활성화된 방입니다.");
         return;
@@ -232,6 +233,7 @@ function onCommand(cmd) {
         if (index !== -1) {
             rooms.splice(index, 1);
             saveActiveRooms(rooms);
+            Log.i("[채팅봇] 방 비활성화: " + cmd.room + " (by " + cmd.author.name + ")");
             cmd.reply("❌ [" + cmd.room + "] 비활성화 완료");
         } else cmd.reply("활성화되지 않은 방입니다.");
         return;
@@ -398,7 +400,7 @@ function onCommand(cmd) {
         return;
     }
     } catch (e) {
-        Log.e("onCommand 오류: " + String(e));
+        Log.e("[채팅봇] onCommand 오류 (!" + cmd.command + "): " + String(e));
     }
 }
 
@@ -494,10 +496,11 @@ function onMessage(msg) {
         }
 
     } catch (e) {
-        Log.e("ChatBot Error: " + e);
+        Log.e("[채팅봇] onMessage 오류: " + String(e));
     }
 }
 
 bot.addListener(Event.COMMAND, onCommand);
 bot.addListener(Event.MESSAGE, onMessage);
 bot.setCommandPrefix("!");
+Log.i("[채팅봇] v1.3.0 로드 완료.");

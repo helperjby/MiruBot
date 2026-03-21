@@ -391,4 +391,4 @@ bot.addListener(Event.COMMAND, function (cmd) {
     }
 });
 
-Log.i("[요약봇] v1.0.0 로드됨");
+Log.i("[요약봇] v1.2.0 로드 완료.");

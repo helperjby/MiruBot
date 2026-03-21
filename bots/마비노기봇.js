@@ -57,7 +57,7 @@ function getRuneInfo() {
     try {
         return JSON.parse(data);
     } catch (e) {
-        Log.e("룬 정보 파싱 오류: " + e);
+        Log.e("[마비노기봇] 룬 정보 파싱 오류: " + e);
         return [];
     }
 }
@@ -170,7 +170,7 @@ function sendMalteseSearch(channelId, query) {
                 }
             }
         } catch (e) {
-            Log.e("검색 로직 실패: " + e);
+            Log.e("[마비노기봇] 랭킹 검색 실패: " + e);
             bot.send(channelId, "❌ 검색 중 오류가 발생했습니다.");
         }
     }).start();
@@ -197,7 +197,7 @@ function fetchGlobalSearch(cmd, nickname) {
 
             cmd.reply(msg.trim());
         } catch (e) {
-            Log.e("랭킹 검색 오류: " + e);
+            Log.e("[마비노기봇] 랭킹 상세 검색 오류: " + e);
             cmd.reply("❌ API 호출 중 오류가 발생했습니다.");
         }
     }).start();
@@ -253,7 +253,7 @@ function fetchUserDetail(cmd, server, nickname) {
 
             cmd.reply(result);
         } catch (e) {
-            Log.e("상세 정보 오류: " + e);
+            Log.e("[마비노기봇] 상세 정보 조회 오류: " + e);
             cmd.reply("❌ 정보를 가져오는 중 오류가 발생했습니다.");
         }
     }).start();
@@ -296,7 +296,7 @@ function sendMalteseImages(channelId, count, isAutoDaily) {
                 sender.returnToAppNow();
             }
         } catch (e) {
-            Log.e("말티즈 전송 오류: " + e);
+            Log.e("[마비노기봇] 말티즈 이미지 전송 오류: " + e);
         }
     }).start();
 }
@@ -317,7 +317,7 @@ function onMessage(msg) {
         sendMalteseImages(msg.channelId, 2, true);
     }
     } catch (e) {
-        Log.e("onMessage 오류: " + String(e));
+        Log.e("[마비노기봇] onMessage 오류: " + String(e));
     }
 }
 
@@ -410,7 +410,7 @@ function onCommand(cmd) {
                         cmd.reply("❌ 운세 서버 접속에 실패했습니다. (Code: " + res.statusCode() + ")");
                     }
                 } catch (e) {
-                    Log.e("열쇠운세 오류: " + e);
+                    Log.e("[마비노기봇] 열쇠운세 오류: " + e);
                     cmd.reply("❌ 처리 중 오류가 발생했습니다.\n" + e);
                 }
             }).start();
@@ -543,7 +543,7 @@ function onCommand(cmd) {
             break;
     }
     } catch (e) {
-        Log.e("onCommand 오류: " + String(e));
+        Log.e("[마비노기봇] onCommand 오류 (!" + cmd.command + "): " + String(e));
     }
 }
 
@@ -670,7 +670,7 @@ function onNotification(sbn) {
         }
 
     } catch (e) {
-        Log.e("알림 처리 오류: " + e);
+        Log.e("[마비노기봇] 알림 처리 오류: " + e);
     }
 }
 

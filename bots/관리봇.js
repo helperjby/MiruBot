@@ -272,6 +272,7 @@ function onCommand(cmd) {
 
             let turnOn = (cmd.command === "봇켜기");
             target.setPower(turnOn);
+            Log.i("[관리봇] " + name + " 봇 " + (turnOn ? "켜기" : "끄기") + " (by " + cmd.author.name + ")");
             cmd.reply(`✅ ${name} 봇을 ${turnOn ? "켰습니다" : "껐습니다"}.`);
             break;
         }
@@ -294,8 +295,10 @@ function onCommand(cmd) {
 
             let success = compileTarget.compile();
             if (success) {
+                Log.i("[관리봇] " + compileName + " 컴파일 성공 (by " + cmd.author.name + ")");
                 cmd.reply(`✅ ${compileName} 봇 컴파일 성공.`);
             } else {
+                Log.e("[관리봇] " + compileName + " 컴파일 실패 (by " + cmd.author.name + ")");
                 cmd.reply(`❌ ${compileName} 봇 컴파일 실패. 로그를 확인해주세요.`);
             }
             break;
@@ -496,12 +499,14 @@ function onCommand(cmd) {
                         botRoomsData[setBotName].push(chId);
                     }
                     saveBotRooms(botRoomsData);
+                    Log.i("[관리봇] 적용설정 추가: " + setBotName + " → " + cmd.room);
                     cmd.reply(`✅ ${setBotName}에 현재 방(${cmd.room})을 추가했습니다.`);
                 } else {
                     let idx = botRoomsData[setBotName].indexOf(chId);
                     if (idx >= 0) {
                         botRoomsData[setBotName].splice(idx, 1);
                         saveBotRooms(botRoomsData);
+                        Log.i("[관리봇] 적용설정 제거: " + setBotName + " ← " + cmd.room);
                         cmd.reply(`✅ ${setBotName}에서 현재 방(${cmd.room})을 제거했습니다.`);
                     } else {
                         cmd.reply(`❌ ${setBotName}에 현재 방이 등록되어 있지 않습니다.`);

@@ -75,7 +75,7 @@ const postToFastAPI = (endpoint, payload) => {
 
         if (statusCode < 200 || statusCode >= 300) {
             let errorLog = responseText.length > 200 ? responseText.substring(0, 200) + "..." : responseText;
-            Log.e(endpoint + " API HTTP 오류: " + statusCode + " - " + errorLog);
+            Log.e("[API] " + endpoint + " HTTP 오류: " + statusCode + " - " + errorLog);
             return { success: false, data: null, error: "HTTP " + statusCode };
         }
 
@@ -83,14 +83,14 @@ const postToFastAPI = (endpoint, payload) => {
         try {
             responseData = JSON.parse(responseText);
         } catch (e) {
-            Log.e(endpoint + " JSON 파싱 오류: " + String(e));
+            Log.e("[API] " + endpoint + " JSON 파싱 오류: " + String(e));
             return { success: false, data: null, error: "파싱 오류" };
         }
 
         return { success: true, data: responseData, error: null };
 
     } catch (e) {
-        Log.e(endpoint + " Jsoup 연결 오류: " + String(e));
+        Log.e("[API] " + endpoint + " 연결 오류: " + String(e));
         return { success: false, data: null, error: "연결 실패" };
     }
 };
@@ -115,7 +115,7 @@ const getFromFastAPI = (endpoint) => {
 
         if (statusCode < 200 || statusCode >= 300) {
             let errorLog = responseText.length > 200 ? responseText.substring(0, 200) + "..." : responseText;
-            Log.e(endpoint + " API HTTP 오류: " + statusCode + " - " + errorLog);
+            Log.e("[API] " + endpoint + " HTTP 오류: " + statusCode + " - " + errorLog);
             return { success: false, data: null, error: "HTTP " + statusCode };
         }
 
@@ -123,14 +123,14 @@ const getFromFastAPI = (endpoint) => {
         try {
             responseData = JSON.parse(responseText);
         } catch (e) {
-            Log.e(endpoint + " JSON 파싱 오류: " + String(e));
+            Log.e("[API] " + endpoint + " JSON 파싱 오류: " + String(e));
             return { success: false, data: null, error: "파싱 오류" };
         }
 
         return { success: true, data: responseData, error: null };
 
     } catch (e) {
-        Log.e(endpoint + " Jsoup 연결 오류: " + String(e));
+        Log.e("[API] " + endpoint + " 연결 오류: " + String(e));
         return { success: false, data: null, error: "연결 실패" };
     }
 };
@@ -153,8 +153,7 @@ const cleanupRecentUrlMap = () => {
 
 function onCommand(cmd) {
     try {
-        Log.d("메시지 수신: " + cmd.content);
-        Log.d("명령어 수신: " + cmd.command + " / args: " + cmd.args);
+        Log.d("[API] 명령어 수신: !" + cmd.command + " " + cmd.args.join(" "));
 
         if (cmd.command === "번역") {
             let textToTranslate = cmd.args.join(" ");
@@ -171,15 +170,15 @@ function onCommand(cmd) {
                     if (response.success && response.data && response.data.translation) {
                         cmd.reply("🌐 번역 결과:\n" + response.data.translation);
                     } else {
-                        Log.e("번역 API 응답 실패: " + response.error);
+                        Log.e("[API] 번역 API 응답 실패: " + response.error);
                     }
                 } catch (e) {
-                    Log.e("번역 스레드 오류: " + e);
+                    Log.e("[API] 번역 스레드 오류: " + e);
                 }
             }).start();
         }
     } catch (e) {
-        Log.e("onCommand 오류: " + String(e));
+        Log.e("[API] onCommand 오류: " + String(e));
     }
 }
 
@@ -198,7 +197,7 @@ function onMessage(msg) {
 
         // --- [명령어 감지 로직: !환율, !증시] ---
         if (messageContent === "!환율" || messageContent === "!증시") {
-            Log.i("명령어 감지: " + messageContent);
+            Log.i("[API] 명령어 감지: " + messageContent);
 
             new Thread(function() {
                 try {
@@ -215,10 +214,10 @@ function onMessage(msg) {
                             msg.reply(headline + "\n" + summary);
                         }
                     } else {
-                        Log.e(messageContent + " API 요청 실패: " + response.error);
+                        Log.e("[API] " + messageContent + " API 요청 실패: " + response.error);
                     }
                 } catch (e) {
-                    Log.e(messageContent + " 처리 스레드 오류: " + String(e));
+                    Log.e("[API] " + messageContent + " 처리 스레드 오류: " + String(e));
                 }
             }).start();
             return;
@@ -237,7 +236,7 @@ function onMessage(msg) {
 
             if (count > 4) return;
 
-            Log.i(`명령어 감지: !${categoryName} ${count}장. 처리 시작.`);
+            Log.i(`[API] 명령어 감지: !${categoryName} ${count}장. 처리 시작.`);
 
             new Thread(function() {
                 try {
@@ -245,14 +244,14 @@ function onMessage(msg) {
                     let response = getFromFastAPI(`/images/random/${category}?count=${count}`);
 
                     if (!response.success) {
-                        Log.e(`!${categoryName} API 오류: ${response.error}`);
+                        Log.e(`[API] !${categoryName} API 오류: ${response.error}`);
                         return;
                     }
 
                     let imageUrls = response.data.urls;
 
                     if (!imageUrls || imageUrls.length === 0) {
-                        Log.e(`!${categoryName}: 이미지 URL을 받지 못했습니다.`);
+                        Log.e(`[API] !${categoryName}: 이미지 URL을 받지 못했습니다.`);
                         return;
                     }
 
@@ -289,17 +288,17 @@ function onMessage(msg) {
                             }
 
                             let savedFile = new File(savePath);
-                            Log.d(`다운로드 성공 (${i+1}/${count}): ${fileName} (크기: ${savedFile.length()} bytes)`);
+                            Log.d(`[API] 다운로드 성공 (${i+1}/${count}): ${fileName} (크기: ${savedFile.length()} bytes)`);
 
                             localPaths.push(savePath);
                         } catch (downErr) {
-                            Log.e(`이미지 다운로드 실패(${i}): ${downErr}`);
+                            Log.e(`[API] 이미지 다운로드 실패(${i}): ${downErr}`);
                         }
                     }
 
                     // 3. 로컬 파일 전송
                     if (localPaths.length > 0) {
-                        Log.i(`MediaSender 전송 준비 중... (${localPaths.length}장)`);
+                        Log.i(`[API] MediaSender 전송 준비 중... (${localPaths.length}장)`);
 
                         let javaPaths = java.lang.reflect.Array.newInstance(java.lang.String, localPaths.length);
                         for (let j = 0; j < localPaths.length; j++) {
@@ -314,18 +313,18 @@ function onMessage(msg) {
                         }
 
                         if (success) {
-                            Log.i(`!${categoryName} MediaSender 전송 성공!`);
+                            Log.i(`[API] !${categoryName} MediaSender 전송 성공!`);
                             java.lang.Thread.sleep(1500);
                             sender.returnToAppNow();
                         } else {
-                            Log.e(`!${categoryName} MediaSender 전송 실패 (return: false)`);
+                            Log.e(`[API] !${categoryName} MediaSender 전송 실패 (return: false)`);
                         }
                     } else {
-                        Log.e(`!${categoryName} 다운로드된 이미지가 없습니다.`);
+                        Log.e(`[API] !${categoryName} 다운로드된 이미지가 없습니다.`);
                     }
 
                 } catch (e) {
-                    Log.e(`!${categoryName} 전체 처리 중 오류: ` + String(e));
+                    Log.e(`[API] !${categoryName} 전체 처리 중 오류: ` + String(e));
                 }
             }).start();
 
@@ -361,14 +360,14 @@ function onMessage(msg) {
                 if (response.success && response.data && response.data.gemini_summary) {
                     msg.reply(foldMessage(response.data.gemini_summary));
                 } else if (!response.success) {
-                    Log.e("URL 처리 API 요청 실패: " + response.error);
+                    Log.e("[API] URL 처리 API 요청 실패: " + response.error);
                 }
             } catch (e) {
-                Log.e("URL 처리 스레드 오류: " + e);
+                Log.e("[API] URL 처리 스레드 오류: " + e);
             }
         }).start();
     } catch (e) {
-        Log.e("onMessage 오류: " + String(e));
+        Log.e("[API] onMessage 오류: " + String(e));
     }
 }
 
@@ -379,4 +378,4 @@ bot.setCommandPrefix('$');
 bot.addListener(Event.COMMAND, onCommand);
 bot.addListener(Event.MESSAGE, onMessage);
 
-Log.i("외부 연동 봇 (v2.4) 로드됨");
+Log.i("[API] 외부 연동 봇 v2.4 로드 완료.");

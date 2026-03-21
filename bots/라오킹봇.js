@@ -201,7 +201,7 @@ function collectScheduleItems(rangeStart, rangeEnd) {
                 items.push({ timestamp: event.timestamp, label: `📅 ${event.name}` });
             }
         });
-    } catch (e) { Log.e(e); }
+    } catch (e) { Log.e("[라오킹봇] 단발성 이벤트 파싱 오류: " + e); }
 
     // 시간순 정렬
     items.sort((a, b) => a.timestamp - b.timestamp);
@@ -213,7 +213,7 @@ function collectScheduleItems(rangeStart, rangeEnd) {
         const birthdays = JSON.parse(rawBirth);
         const mmdd = String(rangeStart.getMonth() + 1).padStart(2, '0') + String(rangeStart.getDate()).padStart(2, '0');
         birthdayNames = birthdays.filter(b => b.date === mmdd).map(b => b.name);
-    } catch (e) { Log.e(e); }
+    } catch (e) { Log.e("[라오킹봇] 생일 데이터 파싱 오류: " + e); }
 
     return { items, birthdayNames };
 }
@@ -248,7 +248,7 @@ function handleNoticeRelay(msg) {
     const relayMessage = `[📢공지전파]\n작성자: ${msg.author.name}\n${msg.content}`;
     try {
         bot.send(NOTICE_DESTINATION_ROOM_NAME, relayMessage, msg.packageName);
-    } catch (e) { Log.e(e); }
+    } catch (e) { Log.e("[라오킹봇] 공지 전파 오류: " + e); }
 }
 
 /** [기능 2] 일일 자동 공지 (09:00~익일 09:00 고정 범위) */
@@ -358,8 +358,9 @@ function handleRegisterEvent(cmd, fullArgs) {
         
         events.push({ name: eventName, timestamp: eventDate.getTime() });
         FileStream.write(ONE_TIME_EVENTS_PATH, JSON.stringify(events, null, 2));
+        Log.i("[라오킹봇] 일정 등록: " + eventName + " (by " + cmd.author.name + ")");
         cmd.reply(`[등록 완료] ${eventName} (${eventDate.toLocaleString()})`);
-    } catch (e) { cmd.reply(`등록 실패: ${e.message}`); }
+    } catch (e) { Log.e("[라오킹봇] 일정 등록 실패: " + e.message); cmd.reply(`등록 실패: ${e.message}`); }
 }
 
 function handleDeleteEvent(cmd, eventName) {
@@ -371,8 +372,9 @@ function handleDeleteEvent(cmd, eventName) {
         
         if (events.length === remaining.length) { cmd.reply("해당 일정이 없습니다."); return; }
         FileStream.write(ONE_TIME_EVENTS_PATH, JSON.stringify(remaining, null, 2));
+        Log.i("[라오킹봇] 일정 삭제: " + eventName + " (by " + cmd.author.name + ")");
         cmd.reply(`[삭제 완료] ${eventName}`);
-    } catch (e) { cmd.reply(`오류: ${e.message}`); }
+    } catch (e) { Log.e("[라오킹봇] 일정 삭제 오류: " + e.message); cmd.reply(`오류: ${e.message}`); }
 }
 
 function handleShowEvents(cmd) {
@@ -464,7 +466,7 @@ function handleShowBirthdays(cmd) {
         cmd.reply(msg.trim()); // 
 
     } catch (e) {
-        Log.e(e); // 
+        Log.e("[라오킹봇] 생일 목록 조회 오류: " + e);
         cmd.reply("생일 목록을 불러오는 중 오류가 발생했습니다.");
     }
 }
@@ -491,7 +493,7 @@ function onMessage(msg) {
     try {
         handleNoticeRelay(msg);
         checkAndSendDailySchedule(msg);
-    } catch (e) { Log.e(e); }
+    } catch (e) { Log.e("[라오킹봇] onMessage 오류: " + e); }
 }
 
 function onCommand(cmd) {
@@ -525,7 +527,7 @@ function onCommand(cmd) {
                             java.lang.Thread.sleep(1000); sender.returnToAppNow();
                         } else cmd.reply("전송 실패");
                     }
-                } catch (e) { Log.e(e); }
+                } catch (e) { Log.e("[라오킹봇] 크븝 이미지 전송 오류: " + e); }
                 break;
 
             case "특성":
@@ -536,7 +538,7 @@ function onCommand(cmd) {
                     if (sender.send(cmd.channelId, paths)) {
                         java.lang.Thread.sleep(1000); sender.returnToAppNow();
                     } else cmd.reply("전송 실패");
-                } catch (e) { Log.e(e); }
+                } catch (e) { Log.e("[라오킹봇] 특성 이미지 전송 오류: " + e); }
                 break;
 
             case "명령어":
@@ -548,7 +550,7 @@ function onCommand(cmd) {
                 cmd.reply(help);
                 break;
         }
-    } catch (e) { Log.e(e); cmd.reply("오류 발생"); }
+    } catch (e) { Log.e("[라오킹봇] onCommand 오류 (!" + cmd.command + "): " + e); cmd.reply("오류 발생"); }
 }
 
 // --- 5. 리스너 등록 ---
