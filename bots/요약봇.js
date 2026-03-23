@@ -25,7 +25,7 @@
 /* ==================== 전역 상수/변수 ==================== */
 
 const bot = BotManager.getCurrentBot();
-const Thread = Packages.java.lang.Thread;
+const Thread = java.lang.Thread;
 const Jsoup = org.jsoup.Jsoup;
 
 const FASTAPI_BASE_URL = "http://192.168.0.133:8080";
