@@ -9,6 +9,11 @@
 //   - findUser 정규화 맵 사전 구축으로 반복 replace 제거
 //   - 채팅 카운트를 comm_db._meta에 통합 (countCache/saveCounters/COUNT_FILE 제거)
 //   - indexOf → includes 전환, JSON compact 저장, 레거시 마이그레이션 코드 제거
+// v1.4.0  2026-03-24  칭호/등급 시스템 및 랭킹 커맨드 추가
+//   - getUserTitle() 함수 추가: 레벨 구간별 7단계 칭호 (새싹~신화)
+//   - !정보 출력에 칭호 표시
+//   - 월간 XP 추적 (monthlyXp/monthlyXpMonth 필드, 월 변경 시 자동 리셋)
+//   - !랭킹채팅 커맨드 신설: 누적 TOP15 + 월간 TOP15 한 메시지 출력
 // ==========================================================
 
 const bot = BotManager.getCurrentBot();
@@ -148,6 +153,16 @@ function getChannelMeta(channelId) {
 }
 
 function getXpForNextLevel(level) { return (level * 200) + 50; }
+
+function getUserTitle(level) {
+    if (level >= 50) return "🌟 신화";
+    if (level >= 40) return "🏆 전설";
+    if (level >= 30) return "👑 왕관";
+    if (level >= 20) return "💎 다이아";
+    if (level >= 10) return "⭐ 별";
+    if (level >= 5)  return "🌿 풀잎";
+    return "🌱 새싹";
+}
 
 function createProgressBar(current, max) {
     let percentage = (max > 0) ? (current / max) : 0;
@@ -299,7 +314,8 @@ function onCommand(cmd) {
         let pop = (u.upvotes || 0) - (u.downvotes || 0);
         let lastSeenDate = u.lastSeen || "기록 없음";
 
-        let reply = "📊 lv" + u.level + " " + u.name + " 님의 정보\n━━━━━━━━━━━━━━\n";
+        let title = getUserTitle(u.level);
+        let reply = "📊 lv" + u.level + " " + title + " " + u.name + " 님의 정보\n━━━━━━━━━━━━━━\n";
         let viewMore = "\u200b".repeat(500);
         reply += viewMore + "\n";
         reply += "⚜️ 경험치 : " + u.xp + " / " + reqXp + " (누적: " + (u.totalXp || 0) + ")\n";
@@ -321,6 +337,60 @@ function onCommand(cmd) {
                 }
             }
         }
+        cmd.reply(reply.trim());
+        return;
+    }
+
+    // 4. 채팅 레벨 랭킹
+    if (cmd.command === "랭킹채팅") {
+        let db = getCommDb(chIdStr);
+        let now = new Date();
+        let curMonth = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+        let users = [];
+        let keys = Object.keys(db);
+        for (let i = 0; i < keys.length; i++) {
+            if (keys[i] === "_meta") continue;
+            let u = db[keys[i]];
+            users.push({
+                name: u.name,
+                level: u.level || 1,
+                totalXp: u.totalXp || 0,
+                monthlyXp: (u.monthlyXpMonth === curMonth) ? (u.monthlyXp || 0) : 0
+            });
+        }
+
+        let medals = ["🥇", "🥈", "🥉"];
+
+        // 누적 랭킹
+        let byTotal = users.slice().sort(function(a, b) {
+            if (b.level !== a.level) return b.level - a.level;
+            return b.totalXp - a.totalXp;
+        });
+        let topTotal = byTotal.slice(0, 15);
+        let reply = "🏅 채팅 레벨 랭킹\n━━━━━━━━━━━━━━\n\n";
+        reply += "📊 누적 랭킹\n";
+        for (let i = 0; i < topTotal.length; i++) {
+            let prefix = (i < 3) ? medals[i] + " " : (i + 1) + "위 ";
+            let title = getUserTitle(topTotal[i].level);
+            reply += prefix + "lv" + topTotal[i].level + " " + title + " " + topTotal[i].name + "\n";
+        }
+
+        // 월간 랭킹
+        let byMonthly = users.filter(function(u) { return u.monthlyXp > 0; })
+            .sort(function(a, b) { return b.monthlyXp - a.monthlyXp; });
+        let topMonthly = byMonthly.slice(0, 15);
+        let monthLabel = String(now.getMonth() + 1) + "월";
+
+        reply += "\n📅 " + monthLabel + " 랭킹\n";
+        if (topMonthly.length === 0) {
+            reply += "아직 데이터가 없습니다.\n";
+        } else {
+            for (let i = 0; i < topMonthly.length; i++) {
+                let prefix = (i < 3) ? medals[i] + " " : (i + 1) + "위 ";
+                reply += prefix + "+" + topMonthly[i].monthlyXp + "xp " + topMonthly[i].name + "\n";
+            }
+        }
+
         cmd.reply(reply.trim());
         return;
     }
@@ -469,6 +539,14 @@ function onMessage(msg) {
         user.xp += (1 + bonusXp);
         if (!user.totalXp) user.totalXp = 0;
         user.totalXp += (1 + bonusXp);
+
+        let currentMonth = todayStr.substring(0, 7);
+        if (user.monthlyXpMonth !== currentMonth) {
+            user.monthlyXp = 0;
+            user.monthlyXpMonth = currentMonth;
+        }
+        user.monthlyXp += (1 + bonusXp);
+
         let leveledUp = false;
 
         while (user.xp >= getXpForNextLevel(user.level)) {
@@ -503,4 +581,4 @@ function onMessage(msg) {
 bot.addListener(Event.COMMAND, onCommand);
 bot.addListener(Event.MESSAGE, onMessage);
 bot.setCommandPrefix("!");
-Log.i("[채팅봇] v1.3.0 로드 완료.");
+Log.i("[채팅봇] v1.4.0 로드 완료.");
