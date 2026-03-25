@@ -264,6 +264,17 @@ function onMessage(msg) {
                         dirFile.mkdirs();
                     }
 
+                    // 30초 이상 된 이전 임시 파일만 정리
+                    let now = java.lang.System.currentTimeMillis();
+                    let oldFiles = dirFile.listFiles();
+                    if (oldFiles) {
+                        for (let f = 0; f < oldFiles.length; f++) {
+                            if (now - oldFiles[f].lastModified() > 30000) {
+                                try { oldFiles[f].delete(); } catch (ignored) {}
+                            }
+                        }
+                    }
+
                     let localPaths = [];
 
                     for (let i = 0; i < imageUrls.length; i++) {
@@ -307,11 +318,6 @@ function onMessage(msg) {
 
                         let success = sender.send(msg.channelId, javaPaths);
 
-                        // 전송 후 로컬 파일 삭제
-                        for (let p of localPaths) {
-                            try { new File(p).delete(); } catch (ignored) {}
-                        }
-
                         if (success) {
                             Log.i(`[API] !${categoryName} MediaSender 전송 성공!`);
                             java.lang.Thread.sleep(1500);
@@ -319,6 +325,7 @@ function onMessage(msg) {
                         } else {
                             Log.e(`[API] !${categoryName} MediaSender 전송 실패 (return: false)`);
                         }
+
                     } else {
                         Log.e(`[API] !${categoryName} 다운로드된 이미지가 없습니다.`);
                     }

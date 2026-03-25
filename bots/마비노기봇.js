@@ -113,8 +113,8 @@ function getRunewordString(categoryName, dataList) {
 function sendMalteseSearch(channelId, query) {
     new java.lang.Thread(function() {
         try {
-            let sender = new MediaSender(); 
-            let baseDir = "/storage/emulated/0/msgbot_media";
+            let sender = new MediaSender();
+            let baseDir = sender.getBaseDirectory();
 
             let apiUrl = FASTAPI_BASE_URL + "/images/search/maltese?query=" + encodeURIComponent(query);
             
@@ -152,7 +152,8 @@ function sendMalteseSearch(channelId, query) {
 
             if (data.urls && data.urls.length > 0) {
                 let imgUrl = data.urls[0];
-                let fileName = "search_" + Date.now() + ".jpg";
+                let ext = imgUrl.substring(imgUrl.lastIndexOf(".")) || ".jpg";
+                let fileName = "search_" + Date.now() + ext;
                 let savePath = baseDir + "/" + fileName;
 
                 let imgRes = Jsoup.connect(imgUrl).timeout(30000).maxBodySize(0).ignoreContentType(true).execute();
@@ -160,14 +161,21 @@ function sendMalteseSearch(channelId, query) {
                 fos.write(imgRes.bodyAsBytes());
                 fos.close();
 
-                let foundName = data.file_names[0].replace(/\..+$/, ""); 
+                let foundName = data.file_names[0].replace(/\..+$/, "");
                 bot.send(channelId, "🐶 [" + foundName + "] 님의 스텔라그램입니다.");
-                
-                let success = sender.send(channelId, savePath);
+
+                let javaPaths = java.lang.reflect.Array.newInstance(java.lang.String, 1);
+                javaPaths[0] = savePath;
+                let success = sender.send(channelId, javaPaths);
+
                 if (success) {
-                    java.lang.Thread.sleep(1000);
+                    Log.i("[마비노기봇] 말티즈 검색 이미지 전송 성공");
+                    java.lang.Thread.sleep(1500);
                     sender.returnToAppNow();
+                } else {
+                    Log.e("[마비노기봇] 말티즈 검색 MediaSender 전송 실패 (return: false)");
                 }
+
             }
         } catch (e) {
             Log.e("[마비노기봇] 랭킹 검색 실패: " + e);
@@ -269,18 +277,49 @@ function sendMalteseImages(channelId, count, isAutoDaily) {
             let dirFile = new File(baseDir);
             if (!dirFile.exists()) dirFile.mkdirs();
 
+            // 30초 이상 된 이전 임시 파일만 정리
+            let now = java.lang.System.currentTimeMillis();
+            let oldFiles = dirFile.listFiles();
+            if (oldFiles) {
+                for (let f = 0; f < oldFiles.length; f++) {
+                    if (now - oldFiles[f].lastModified() > 30000) {
+                        try { oldFiles[f].delete(); } catch (ignored) {}
+                    }
+                }
+            }
+
             let response = Jsoup.connect(apiUrl).timeout(30000).ignoreContentType(true).execute();
             let imageUrls = JSON.parse(response.body()).urls;
-            if (!imageUrls || imageUrls.length === 0) return;
+            if (!imageUrls || imageUrls.length === 0) {
+                Log.e("[마비노기봇] 말티즈 API 응답에 URL이 없습니다.");
+                return;
+            }
+            Log.i("[마비노기봇] 말티즈 이미지 " + imageUrls.length + "장 다운로드 시작");
 
             let localPaths = [];
             for (let i = 0; i < imageUrls.length; i++) {
-                let savePath = baseDir + "/maltese_" + Date.now() + "_" + i + ".jpg";
-                let bytes = Jsoup.connect(imageUrls[i]).timeout(30000).ignoreContentType(true).maxBodySize(0).execute().bodyAsBytes();
-                let fos = new FileOutputStream(savePath);
-                fos.write(bytes);
-                fos.close();
-                localPaths.push(savePath);
+                try {
+                    let ext = imageUrls[i].substring(imageUrls[i].lastIndexOf(".")) || ".jpg";
+                    let savePath = baseDir + "/maltese_" + Date.now() + "_" + i + ext;
+                    let imgRes = Jsoup.connect(imageUrls[i]).timeout(30000).ignoreContentType(true).maxBodySize(0).execute();
+                    let bytes = imgRes.bodyAsBytes();
+                    let fos = new FileOutputStream(savePath);
+                    try {
+                        fos.write(bytes);
+                    } finally {
+                        fos.close();
+                    }
+                    let savedFile = new File(savePath);
+                    Log.d("[마비노기봇] 다운로드 성공 (" + (i+1) + "/" + imageUrls.length + "): " + savedFile.length() + " bytes");
+                    localPaths.push(savePath);
+                } catch (downErr) {
+                    Log.e("[마비노기봇] 이미지 다운로드 실패(" + i + "): " + downErr);
+                }
+            }
+
+            if (localPaths.length === 0) {
+                Log.e("[마비노기봇] 다운로드된 이미지가 없습니다.");
+                return;
             }
 
             if (isAutoDaily) bot.send(channelId, "오늘의 말텔라그램🐶");
@@ -291,10 +330,15 @@ function sendMalteseImages(channelId, count, isAutoDaily) {
             }
 
             let success = sender.send(channelId, javaPaths);
+
             if (success) {
+                Log.i("[마비노기봇] 말티즈 MediaSender 전송 성공 (" + localPaths.length + "장)");
                 java.lang.Thread.sleep(2000);
                 sender.returnToAppNow();
+            } else {
+                Log.e("[마비노기봇] 말티즈 MediaSender 전송 실패 (return: false)");
             }
+
         } catch (e) {
             Log.e("[마비노기봇] 말티즈 이미지 전송 오류: " + e);
         }
