@@ -14,12 +14,14 @@
  * - !요약 <N>        : 최근 N시간 요약 (1~12)
  * - !채팅통계 <닉네임> : 유저별 채팅 통계 (일반/시간대별/요일별)
  * - !인물평 <닉네임>   : 유저별 LLM 인물평 분석
+ * - !나이 <닉네임>     : 유저별 LLM 나이 추정
  *
  * 변경 이력
  * - v1.0.0 (2026-03-19) : 초기 버전 — 채팅 로그 수집, 배치 flush, !요약 명령어
  * - v1.1.0 (2026-03-20) : !채팅통계 명령어 추가 — 닉네임 검색(대소문자/공백 무시),
  *                         시간대별·요일별 바 차트, Gemini 인물평 분석
  * - v1.2.0 (2026-03-20) : 인물평을 !채팅통계에서 분리하여 !인물평 명령어로 독립
+ * - v1.3.0 (2026-03-25) : !나이 명령어 추가 — 층화 샘플링 기반 LLM 나이 추정
  */
 
 /* ==================== 전역 상수/변수 ==================== */
@@ -59,6 +61,9 @@ function isDbEnabled(channelId) {
 // 채팅방별 인메모리 버퍼: { channelId: [msg, ...] }
 const chatBuffer = {};
 
+// !나이 명령어 처리 중 플래그
+let isAgeProcessing = false;
+
 // flush 중복 방지 플래그
 let isFlushing = false;
 
@@ -67,14 +72,15 @@ let isFlushing = false;
 /**
  * FastAPI 서버에 POST 요청을 전송합니다 (동기).
  */
-function postToServer(endpoint, payload) {
+function postToServer(endpoint, payload, timeoutMs) {
     let url = FASTAPI_BASE_URL + endpoint;
     let payloadJson = JSON.stringify(payload);
+    let timeout = timeoutMs || 30000;
 
     try {
         let response = Jsoup.connect(url)
             .header("Content-Type", "application/json")
-            .timeout(30000)
+            .timeout(timeout)
             .maxBodySize(1024 * 1024)
             .ignoreContentType(true)
             .requestBody(payloadJson)
@@ -320,7 +326,7 @@ bot.addListener(Event.COMMAND, function (cmd) {
                     let response = postToServer("/chat-personality", {
                         channel_id: channelId,
                         nickname: nickname
-                    });
+                    }, 90000);
 
                     if (response.success && response.data) {
                         if (response.data.success && response.data.personality_text) {
@@ -336,6 +342,55 @@ bot.addListener(Event.COMMAND, function (cmd) {
                 } catch (e) {
                     Log.e("[요약봇] 인물평 스레드 오류: " + String(e));
                     cmd.reply("인물평 조회 중 오류가 발생했습니다.");
+                }
+            }).start();
+
+            return;
+        }
+
+        // --- !나이 명령어 ---
+        if (cmd.command === "나이") {
+            if (cmd.args.length === 0) {
+                cmd.reply("사용법: !나이 닉네임");
+                return;
+            }
+
+            if (isAgeProcessing) {
+                cmd.reply("이전 나이 추정 요청을 처리 중입니다. 잠시 후 다시 시도해주세요.");
+                return;
+            }
+
+            let nickname = cmd.args.join(" ");
+            let channelId = String(cmd.channelId);
+            isAgeProcessing = true;
+            cmd.reply("'" + nickname + "'님의 나이를 추정하는 중...");
+
+            new Thread(function () {
+                try {
+                    // 조회 전 버퍼 flush
+                    flushAllBuffers();
+
+                    let response = postToServer("/chat-age", {
+                        channel_id: channelId,
+                        nickname: nickname
+                    }, 90000);
+
+                    if (response.success && response.data) {
+                        if (response.data.success && response.data.age_text) {
+                            let viewMore = "\u200b".repeat(500);
+                            cmd.reply(response.data.age_text.split("\n")[0] + "\n" + viewMore + "\n" + response.data.age_text.substring(response.data.age_text.indexOf("\n") + 1));
+                        } else {
+                            cmd.reply(response.data.message || "나이를 추정할 수 없습니다.");
+                        }
+                    } else {
+                        cmd.reply("나이 추정 요청에 실패했습니다.");
+                        Log.e("[요약봇] 나이 API 실패: " + response.error);
+                    }
+                } catch (e) {
+                    Log.e("[요약봇] 나이 스레드 오류: " + String(e));
+                    cmd.reply("나이 추정 중 오류가 발생했습니다.");
+                } finally {
+                    isAgeProcessing = false;
                 }
             }).start();
 
@@ -391,4 +446,4 @@ bot.addListener(Event.COMMAND, function (cmd) {
     }
 });
 
-Log.i("[요약봇] v1.2.0 로드 완료.");
+Log.i("[요약봇] v1.3.0 로드 완료.");

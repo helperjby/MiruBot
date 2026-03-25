@@ -347,6 +347,254 @@ def get_chat_stats(channel_id: str, nickname: str) -> dict:
     }
 
 
+def _fetch_user_features(channel_id: str, user_hash: str) -> str | None:
+    """유저의 등록된 특징(features)을 조회합니다.
+    ref:<user_hash> 패턴이 있으면 해당 유저의 features와 닉네임을 인라인으로 치환합니다."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT features FROM user_features WHERE channel_id = ? AND user_hash = ?",
+        (channel_id, user_hash),
+    ).fetchone()
+    if not row:
+        return None
+
+    features = row["features"]
+
+    # ref:<hash> 참조 해석 (최대 3단계 깊이 방지)
+    ref_re = re.compile(r"ref:([a-f0-9]+)")
+    resolved = set()
+
+    for _ in range(3):
+        matches = ref_re.findall(features)
+        if not matches:
+            break
+        for ref_hash in matches:
+            if ref_hash in resolved:
+                continue
+            resolved.add(ref_hash)
+
+            # 참조 대상의 닉네임 조회
+            name_row = conn.execute(
+                """SELECT user_name FROM chat_logs
+                   WHERE channel_id = ? AND user_hash = ?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (channel_id, ref_hash),
+            ).fetchone()
+            ref_name = name_row["user_name"] if name_row else ref_hash
+
+            # 참조 대상의 features 조회
+            ref_feat_row = conn.execute(
+                "SELECT features FROM user_features WHERE channel_id = ? AND user_hash = ?",
+                (channel_id, ref_hash),
+            ).fetchone()
+            ref_info = f"{ref_name}"
+            if ref_feat_row:
+                ref_info += f"({ref_feat_row['features']})"
+
+            features = features.replace(f"ref:{ref_hash}", ref_info)
+
+    return features
+
+
+def _fetch_age_messages(channel_id: str, user_hash: str) -> tuple[list[str], dict]:
+    """나이 추정을 위한 메시지를 시간대별 층화 샘플링 + 대화쌍으로 가져옵니다.
+    Returns: (formatted_pairs, activity_profile)"""
+    conn = get_connection()
+
+    # 시간대별·요일별 층화 샘플링: 4시간대 × 2(평일/주말) = 8 버킷
+    # 시간대: 새벽(1-6), 오전(7-12), 오후(13-18), 저녁(19-0)
+    time_slots = [
+        ("새벽", 1, 6),
+        ("오전", 7, 12),
+        ("오후", 13, 18),
+        ("저녁", 19, 23),  # 19-23 + 0시는 별도 처리
+    ]
+    per_bucket = 65  # 8 버킷 × 65 = 최대 520건 (예산 5원)
+
+    all_pairs = []
+    activity_counts = {}  # 시간대별 활동 비율 계산용
+
+    for slot_name, h_start, h_end in time_slots:
+        for is_weekend in [0, 1]:
+            if is_weekend:
+                dow_cond = "IN (0, 6)"
+                bucket_key = f"{slot_name}_주말"
+            else:
+                dow_cond = "BETWEEN 1 AND 5"
+                bucket_key = f"{slot_name}_평일"
+
+            # 저녁(19-23)은 0시도 포함
+            if slot_name == "저녁":
+                hour_cond = "(CAST(strftime('%H', timestamp/1000, 'unixepoch', '+9 hours') AS INTEGER) BETWEEN 19 AND 23 OR CAST(strftime('%H', timestamp/1000, 'unixepoch', '+9 hours') AS INTEGER) = 0)"
+                params = (channel_id, user_hash, per_bucket * 3)
+            else:
+                hour_cond = "CAST(strftime('%H', timestamp/1000, 'unixepoch', '+9 hours') AS INTEGER) BETWEEN ? AND ?"
+                params = (channel_id, user_hash, h_start, h_end, per_bucket * 3)
+
+            # 대상자 메시지 + timestamp 가져오기
+            rows = conn.execute(
+                f"""SELECT content, timestamp FROM chat_logs
+                    WHERE channel_id = ? AND user_hash = ?
+                      AND {hour_cond}
+                      AND CAST(strftime('%w', timestamp/1000, 'unixepoch', '+9 hours') AS INTEGER)
+                          {dow_cond}
+                    ORDER BY RANDOM()
+                    LIMIT ?""",
+                params,
+            ).fetchall()
+
+            bucket_total = len(rows)
+            activity_counts[bucket_key] = bucket_total
+
+            # 1차: 텍스트 필터링
+            candidates = []
+            for r in rows:
+                content = r["content"].strip()
+                if _EMOTICON_RE.match(content):
+                    continue
+                if _NOISE_RE.match(content):
+                    continue
+                if _URL_RE.match(content):
+                    continue
+                if len(content.split()) < 2 and len(content) < 5:
+                    continue
+                candidates.append((content, r["timestamp"]))
+
+            # 2차: 버킷 제한 후 대화쌍 조회 (DB 쿼리 최소화)
+            if len(candidates) > per_bucket:
+                candidates = random.sample(candidates, per_bucket)
+
+            filtered = []
+            for content, ts in candidates:
+                prev_row = conn.execute(
+                    """SELECT content, user_name FROM chat_logs
+                       WHERE channel_id = ? AND timestamp < ?
+                       ORDER BY timestamp DESC LIMIT 1""",
+                    (channel_id, ts),
+                ).fetchone()
+
+                if prev_row and prev_row["user_name"] and not _EMOTICON_RE.match(prev_row["content"].strip()):
+                    pair = f"{prev_row['user_name']}: {prev_row['content'].strip()}\n> {content}"
+                else:
+                    pair = content
+                filtered.append(pair)
+
+            all_pairs.extend(filtered)
+
+    # 활동 시간대 프로필 계산
+    total_activity = sum(activity_counts.values()) or 1
+    activity_profile = {}
+    for slot_name, _, _ in time_slots:
+        weekday = activity_counts.get(f"{slot_name}_평일", 0)
+        weekend = activity_counts.get(f"{slot_name}_주말", 0)
+        activity_profile[slot_name] = round((weekday + weekend) / total_activity * 100)
+
+    weekend_total = sum(v for k, v in activity_counts.items() if "주말" in k)
+    activity_profile["주말_비율"] = round(weekend_total / total_activity * 100)
+
+    return all_pairs, activity_profile
+
+
+def estimate_age(user_name: str, filtered: list[str], activity_profile: dict,
+                 features: str | None = None) -> str:
+    """전처리된 채팅 목록과 활동 프로필을 기반으로 LLM 나이 추정을 수행합니다."""
+
+    if len(filtered) < 20:
+        return "분석할 채팅 데이터가 부족합니다. (최소 20건 이상 필요)"
+
+    # 최대 500건으로 제한 (예산 5원)
+    if len(filtered) > 500:
+        filtered = random.sample(filtered, 500)
+
+    chat_sample = "\n".join(filtered)
+
+    # 활동 시간대 메타데이터 텍스트
+    activity_text = (
+        f"활동 시간대: 새벽(1-6시) {activity_profile.get('새벽', 0)}% / "
+        f"오전(7-12시) {activity_profile.get('오전', 0)}% / "
+        f"오후(13-18시) {activity_profile.get('오후', 0)}% / "
+        f"저녁(19-0시) {activity_profile.get('저녁', 0)}%\n"
+        f"주말 활동 비율: {activity_profile.get('주말_비율', 0)}%"
+    )
+
+    # features 힌트 블록
+    features_block = ""
+    if features:
+        features_block = f"\n--- 알려진 정보 ---\n{features}\n"
+
+    prompt = f"""다음은 '{user_name}'이라는 사람의 채팅 메시지 샘플과 활동 패턴입니다.
+
+--- 활동 패턴 ---
+{activity_text}
+{features_block}
+--- 채팅 샘플 ---
+아래에서 ">" 로 시작하는 줄이 대상자의 메시지이고, 그 위 줄은 직전에 다른 사람이 보낸 메시지입니다.
+
+{chat_sample}
+--- 채팅 샘플 끝 ---
+
+위 데이터를 종합적으로 분석하여 이 사람의 나이(또는 연령대)를 추정해주세요.
+
+분석 기준:
+1. 말투와 은어/신조어 사용 패턴 (세대별 언어 특성)
+2. 문화적 레퍼런스 (언급하는 게임, 드라마, 음악, 유행어 등)
+3. 활동 시간대 (학생/직장인/프리랜서 등 생활 패턴)
+4. 관심사와 화제 (취업, 육아, 학교, 직장 등)
+5. 대화 맥락에서 드러나는 사회적 위치와 생활상
+
+주의: 닉네임으로 나이를 판단하지 마세요. 반드시 채팅 내용과 행동 패턴만으로 판단하세요.
+
+출력 형식 (마크다운 문법 절대 사용 금지, 순수 텍스트만):
+추정 나이: XX~YY세 (추정 중심값 ±2세 범위, 예: 35세로 추정되면 33~37세)
+
+[판단 근거]
+- (근거 1)
+- (근거 2)
+- (근거 3)
+
+판단 근거는 정확히 3줄로 작성하세요. 각 줄은 1문장으로 핵심만 간결하게 요약하세요."""
+
+    try:
+        return _gemini.invoke(prompt, temperature=0.2)
+    except Exception as e:
+        print(f"[stats_service] 나이 추정 실패: {e}")
+        return "나이 추정에 실패했습니다."
+
+
+def get_age_estimate(channel_id: str, nickname: str) -> dict:
+    """나이 추정 전용 파이프라인을 실행합니다."""
+
+    # 1) 닉네임으로 유저 검색
+    search = find_user_hash(channel_id, nickname)
+    if not search["found"]:
+        return {
+            "success": False,
+            "message": search["message"],
+            "age_text": None,
+            "candidates": search.get("candidates"),
+        }
+
+    user_hash = search["user_hash"]
+    user_name = search["user_name"]
+
+    # 2) 유저 features 조회
+    features = _fetch_user_features(channel_id, user_hash)
+
+    # 3) 나이 추정 (층화 샘플링 + 대화쌍 + 전처리 → LLM)
+    age_msgs, activity_profile = _fetch_age_messages(channel_id, user_hash)
+    age_result = estimate_age(user_name, age_msgs, activity_profile, features)
+
+    header = f"{user_name}님의 나이 추정"
+    full_text = f"{header}\n\n{age_result}"
+
+    return {
+        "success": True,
+        "message": None,
+        "age_text": full_text,
+        "candidates": None,
+    }
+
+
 def get_personality(channel_id: str, nickname: str) -> dict:
     """인물평 전용 파이프라인을 실행합니다."""
 

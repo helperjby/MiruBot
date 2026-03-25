@@ -37,6 +37,15 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_channel_time ON chat_logs(channel_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_user_hash ON chat_logs(user_hash);
         CREATE INDEX IF NOT EXISTS idx_source ON chat_logs(source);
+
+        CREATE TABLE IF NOT EXISTS user_features (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id  TEXT NOT NULL,
+            user_hash   TEXT NOT NULL,
+            features    TEXT NOT NULL,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(channel_id, user_hash)
+        );
     """)
     conn.commit()
-    print("[database] chat_logs 테이블 준비 완료")
+    print("[database] chat_logs, user_features 테이블 준비 완료")

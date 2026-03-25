@@ -22,7 +22,7 @@ class GeminiLLM(LLM):
     def _llm_type(self) -> str:
         return "gemini"
 
-    def _call(self, prompt: str, stop=None) -> str:
+    def _call(self, prompt: str, stop=None, **kwargs) -> str:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
@@ -42,7 +42,7 @@ class GeminiLLM(LLM):
                 }
             ],
             "generationConfig": {
-                "temperature": 0.4,
+                "temperature": kwargs.get("temperature", 0.4),
                 "topK": 40,
                 "topP": 0.9,
                 "maxOutputTokens": 1000,

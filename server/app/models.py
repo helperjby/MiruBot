@@ -48,3 +48,8 @@ class ChatStatsRequest(BaseModel):
 class ChatPersonalityRequest(BaseModel):
     channel_id: str
     nickname: str
+
+
+class ChatAgeRequest(BaseModel):
+    channel_id: str
+    nickname: str
