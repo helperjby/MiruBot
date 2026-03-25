@@ -266,9 +266,13 @@ function checkAndSendDailySchedule(msg) {
     const { items, birthdayNames } = collectScheduleItems(start, end);
     const replyMsg = formatBriefing(start, items, birthdayNames);
 
-    const success = bot.send(DAILY_ANNOUNCE_CONFIG.ROOM_NAME, replyMsg);
-    if (success) {
-        FileStream.write(DAILY_ANNOUNCE_CONFIG.STATUS_FILE_PATH, todayStr);
+    try {
+        const success = bot.send(DAILY_ANNOUNCE_CONFIG.ROOM_NAME, replyMsg);
+        if (success) {
+            FileStream.write(DAILY_ANNOUNCE_CONFIG.STATUS_FILE_PATH, todayStr);
+        }
+    } catch (e) {
+        Log.e("[라오킹봇] 일일 공지 전송 실패 (세션 미확보?): " + e);
     }
 }
 
@@ -490,6 +494,7 @@ function handleTomorrow(cmd) {
 // --- 4. 메인 이벤트 리스너 ---
 
 function onMessage(msg) {
+    if (!msg || msg.room == null) return;
     try {
         handleNoticeRelay(msg);
         checkAndSendDailySchedule(msg);
@@ -497,6 +502,7 @@ function onMessage(msg) {
 }
 
 function onCommand(cmd) {
+    if (!cmd || cmd.channelId == null) return;
     if (!ALLOWED_COMMAND_ROOM_IDS.includes(String(cmd.channelId))) return;
 
     try {

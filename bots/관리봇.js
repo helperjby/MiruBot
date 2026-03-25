@@ -308,14 +308,19 @@ function onCommand(cmd) {
         // 8. 로그 조회 [오너]
         // ------------------------------------
         case "로그": {
-            let logBotName = cmd.args.length > 0 ? cmd.args[0] : "관리봇";
+            let isGlobal = (cmd.args.length === 0);
+            let logBotName = "Global";
+            let logPath = "sdcard/msgbot/GLOBAL_LOG.json";
             let lineCount = 10;
-            if (cmd.args.length > 1) {
-                let parsed = parseInt(cmd.args[cmd.args.length - 1]);
-                if (!isNaN(parsed) && parsed > 0) lineCount = Math.min(parsed, 30);
-            }
 
-            let logPath = `sdcard/msgbot/Bots/${logBotName}/log.json`;
+            if (!isGlobal) {
+                logBotName = cmd.args[0];
+                logPath = `sdcard/msgbot/Bots/${logBotName}/log.json`;
+                if (cmd.args.length > 1) {
+                    let parsed = parseInt(cmd.args[cmd.args.length - 1]);
+                    if (!isNaN(parsed) && parsed > 0) lineCount = Math.min(parsed, 30);
+                }
+            }
             let logRaw = FileStream.read(logPath);
 
             if (!logRaw) {
