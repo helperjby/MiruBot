@@ -425,9 +425,15 @@ bot.addListener(Event.COMMAND, function (cmd) {
 
                 if (response.success && response.data) {
                     if (response.data.success && response.data.summary) {
-                        let header = "[ 최근 " + hours + "시간 대화 요약 (" + response.data.count + "건) ]";
+                        let totalCount = response.data.total_count || response.data.count;
+                        let count = response.data.count;
+                        let header = "[ 최근 " + hours + "시간 대화 요약 (" + totalCount + "건) ]";
                         let viewMore = "\u200b".repeat(500);
-                        cmd.reply(header + "\n" + viewMore + "\n" + response.data.summary);
+                        let notice = "";
+                        if (totalCount > count) {
+                            notice = "\n최근 " + count + "건의 대화를 요약한 결과입니다.\n";
+                        }
+                        cmd.reply(header + "\n" + viewMore + notice + "\n" + response.data.summary);
                     } else {
                         cmd.reply(response.data.message || "요약할 대화가 없습니다.");
                     }

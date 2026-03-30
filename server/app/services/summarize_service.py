@@ -6,7 +6,7 @@ from app.services.chat_service import get_recent_logs
 _gemini = GeminiLLM()
 
 # Gemini 입력 토큰 보호: 최대 메시지 수
-MAX_MESSAGES_FOR_SUMMARY = 1500
+MAX_MESSAGES_FOR_SUMMARY = 1000
 
 # content가 이 패턴에 해당하면 요약 대상에서 제외
 _SKIP_RE = re.compile(
@@ -104,8 +104,10 @@ def summarize_chat(channel_id: str, hours: float = 4.0) -> dict:
             "count": 0,
         }
 
+    total_count = len(messages)
+
     # 토큰 보호: 너무 많으면 최근 N개만 사용
-    if len(messages) > MAX_MESSAGES_FOR_SUMMARY:
+    if total_count > MAX_MESSAGES_FOR_SUMMARY:
         messages = messages[-MAX_MESSAGES_FOR_SUMMARY:]
 
     chat_text = _format_chat_log(messages)
@@ -137,4 +139,5 @@ def summarize_chat(channel_id: str, hours: float = 4.0) -> dict:
         "summary": summary,
         "message": None,
         "count": len(messages),
+        "total_count": total_count,
     }
