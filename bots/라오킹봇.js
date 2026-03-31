@@ -1,5 +1,5 @@
 /**
- * [라오킹 봇 - GraalJS 통합 v1.5]
+ * [라오킹 봇 - GraalJS 통합 v1.6]
  * - 환경: MessengerBot R (API2) - v0.7.40a (GraalJS) 이상
  * - 업데이트 내역:
  * v1.0: 기본 이식 (GraalJS)
@@ -8,6 +8,7 @@
  * v1.3: [신규] 생일 관리 및 알림 기능 추가 (!생일등록, !생일제거)
  * v1.4: [수정] 주기성 이벤트 명령어에 패배/예외 기간 처리 추가
  * v1.5: [개선] 브리핑 시스템 고도화 (!오늘, !내일), 시간순 통합 정렬, 09:00~09:00 고정 범위
+ * v1.6: [신규] !연대기 명령어 추가 (남은 일정 조회, 시간조정)
  */
 
 const bot = BotManager.getCurrentBot();
@@ -86,20 +87,20 @@ const FIXED_CHRONICLE_CONFIG = [
     { name: "공략(깃발200개)", startTime: "2026-03-29T12:20:00+09:00", endTime: "2026-03-29T13:20:00+09:00" },
     { name: "접근 허가(6관문)", startTime: "2026-03-29T13:20:00+09:00", endTime: "2026-03-30T13:20:00+09:00" },
     { name: "희생자(추적자3마리)", startTime: "2026-03-30T13:20:00+09:00", endTime: "2026-03-31T13:20:00+09:00" },
-    { name: "전쟁의 북소리(13야도100개)", startTime: "2026-03-31T13:20:00+09:00", endTime: "2026-04-02T13:20:00+09:00" },
-    { name: "단합의 장(전설퀘10개)", startTime: "2026-04-02T13:20:00+09:00", endTime: "2026-04-04T13:20:00+09:00" },
-    { name: "투쟁(성역1개)", startTime: "2026-04-04T13:20:00+09:00", endTime: "2026-04-06T13:20:00+09:00" },
-    { name: "만무일실([개인]야만인100마리)", startTime: "2026-04-06T13:20:00+09:00", endTime: "2026-04-07T13:20:00+09:00" },
-    { name: "일촉즉발(14야도100개)", startTime: "2026-04-07T13:20:00+09:00", endTime: "2026-04-09T13:20:00+09:00" },
-    { name: "발사직전(7관문)", startTime: "2026-04-09T13:20:00+09:00", endTime: "2026-04-10T13:20:00+09:00" },
-    { name: "늑대와양(100만킬)", startTime: "2026-04-10T13:20:00+09:00", endTime: "2026-04-12T13:20:00+09:00" },
-    { name: "포위(8관문)", startTime: "2026-04-12T13:20:00+09:00", endTime: "2026-04-14T13:20:00+09:00" },
-    { name: "전쟁의 불바다(타진영200만킬)", startTime: "2026-04-14T13:20:00+09:00", endTime: "2026-04-16T13:20:00+09:00" },
-    { name: "연이은 승리(15야도100개)", startTime: "2026-04-16T13:20:00+09:00", endTime: "2026-04-18T13:20:00+09:00" },
-    { name: "지구라트의 이름으로(점령유지)", startTime: "2026-04-18T13:20:00+09:00", endTime: "2026-04-21T13:20:00+09:00" },
-    { name: "성지 전쟁(타진영주둔지3개)", startTime: "2026-04-21T13:20:00+09:00", endTime: "2026-04-23T13:20:00+09:00" },
-    { name: "총공격(타진영요새1개)", startTime: "2026-04-23T13:20:00+09:00", endTime: "2026-04-25T13:20:00+09:00" },
-    { name: "지배자의 영광(성전3개)", startTime: "2026-04-25T13:20:00+09:00", endTime: "2026-04-28T13:20:00+09:00" }
+    { name: "전쟁의 북소리(13야도100개)", startTime: "2026-03-31T16:32:00+09:00", endTime: "2026-04-02T16:32:00+09:00" },
+    { name: "단합의 장(전설퀘10개)", startTime: "2026-04-02T16:32:00+09:00", endTime: "2026-04-04T16:32:00+09:00" },
+    { name: "투쟁(성역1개)", startTime: "2026-04-04T16:32:00+09:00", endTime: "2026-04-06T16:32:00+09:00" },
+    { name: "만무일실([개인]야만인100마리)", startTime: "2026-04-06T16:32:00+09:00", endTime: "2026-04-07T16:32:00+09:00" },
+    { name: "일촉즉발(14야도100개)", startTime: "2026-04-07T16:32:00+09:00", endTime: "2026-04-09T16:32:00+09:00" },
+    { name: "발사직전(7관문)", startTime: "2026-04-09T16:32:00+09:00", endTime: "2026-04-10T16:32:00+09:00" },
+    { name: "늑대와양(100만킬)", startTime: "2026-04-10T16:32:00+09:00", endTime: "2026-04-12T16:32:00+09:00" },
+    { name: "포위(8관문)", startTime: "2026-04-12T16:32:00+09:00", endTime: "2026-04-14T16:32:00+09:00" },
+    { name: "전쟁의 불바다(타진영200만킬)", startTime: "2026-04-14T16:32:00+09:00", endTime: "2026-04-16T16:32:00+09:00" },
+    { name: "연이은 승리(15야도100개)", startTime: "2026-04-16T16:32:00+09:00", endTime: "2026-04-18T16:32:00+09:00" },
+    { name: "지구라트의 이름으로(점령유지)", startTime: "2026-04-18T16:32:00+09:00", endTime: "2026-04-21T16:32:00+09:00" },
+    { name: "성지 전쟁(타진영주둔지3개)", startTime: "2026-04-21T16:32:00+09:00", endTime: "2026-04-23T16:32:00+09:00" },
+    { name: "총공격(타진영요새1개)", startTime: "2026-04-23T16:32:00+09:00", endTime: "2026-04-25T16:32:00+09:00" },
+    { name: "지배자의 영광(성전3개)", startTime: "2026-04-25T16:32:00+09:00", endTime: "2026-04-28T16:32:00+09:00" }
 ];
 
 // 1-9-1. 연대기 사전 파싱 (매 메시지마다 Date 파싱 방지)
@@ -491,6 +492,96 @@ function handleTomorrow(cmd) {
     cmd.reply(formatBriefing(start, items, birthdayNames));
 }
 
+/** 연대기: !연대기, !연대기 시간조정 +-hhmm */
+function handleChronicle(cmd) {
+    // 시간조정 서브커맨드
+    if (cmd.args[0] === "시간조정") {
+        const raw = cmd.args[1];
+        if (!raw || !/^[+-]\d{4}$/.test(raw)) {
+            cmd.reply("❌ 형식: !연대기 시간조정 +hhmm 또는 -hhmm");
+            return;
+        }
+        const sign = raw[0] === '+' ? 1 : -1;
+        const hh = parseInt(raw.substring(1, 3), 10);
+        const mm = parseInt(raw.substring(3, 5), 10);
+        const deltaMs = sign * (hh * 60 + mm) * 60 * 1000;
+
+        // 현재 진행중인 연대기 찾기
+        const now = Date.now();
+        let currentIdx = -1;
+        for (let i = 0; i < FIXED_CHRONICLE.length; i++) {
+            if (FIXED_CHRONICLE[i].startMs <= now && FIXED_CHRONICLE[i].endMs > now) {
+                currentIdx = i;
+                break;
+            }
+        }
+
+        // 진행중인 것이 없으면 아직 시작 안 한 첫 항목 기준
+        const startIdx = currentIdx >= 0 ? currentIdx + 1 : FIXED_CHRONICLE.findIndex(e => e.startMs > now);
+        if (startIdx < 0 || startIdx >= FIXED_CHRONICLE.length) {
+            cmd.reply("❌ 조정할 남은 연대기가 없습니다.");
+            return;
+        }
+
+        const firstChanged = FIXED_CHRONICLE[startIdx];
+        const oldStartStr = formatTimeHHMM(new Date(firstChanged.startMs));
+
+        // 시간 조정 적용
+        for (let i = startIdx; i < FIXED_CHRONICLE.length; i++) {
+            FIXED_CHRONICLE[i].startMs += deltaMs;
+            FIXED_CHRONICLE[i].endMs += deltaMs;
+            // CONFIG 원본도 동기화
+            FIXED_CHRONICLE_CONFIG[i].startTime = new Date(FIXED_CHRONICLE[i].startMs).toISOString();
+            FIXED_CHRONICLE_CONFIG[i].endTime = new Date(FIXED_CHRONICLE[i].endMs).toISOString();
+        }
+
+        const newStartStr = formatTimeHHMM(new Date(firstChanged.startMs));
+        const displaySign = sign > 0 ? "+" : "-";
+        const displayHH = String(hh).padStart(2, '0');
+        const displayMM = String(mm).padStart(2, '0');
+        cmd.reply(
+            `✅ 연대기 시간이 ${displaySign}${displayHH}:${displayMM}만큼 조정됐습니다.\n` +
+            `수정내역 ${firstChanged.name} ${oldStartStr}시작 -> ${newStartStr}시작`
+        );
+        return;
+    }
+
+    // 남은 연대기 목록 출력
+    const now = Date.now();
+    const upcoming = [];
+    for (let i = 0; i < FIXED_CHRONICLE.length; i++) {
+        if (FIXED_CHRONICLE[i].endMs > now) {
+            upcoming.push({ idx: i, evt: FIXED_CHRONICLE[i] });
+        }
+    }
+
+    if (upcoming.length === 0) {
+        cmd.reply("📜 남은 연대기 일정이 없습니다.");
+        return;
+    }
+
+    // 헤더: 전체 기간
+    const firstStart = new Date(FIXED_CHRONICLE[0].startMs);
+    const lastEnd = new Date(FIXED_CHRONICLE[FIXED_CHRONICLE.length - 1].endMs);
+    const fs = `${String(firstStart.getFullYear()).slice(2)}.${String(firstStart.getMonth() + 1).padStart(2, '0')}.${String(firstStart.getDate()).padStart(2, '0')}`;
+    const le = `${String(lastEnd.getFullYear()).slice(2)}.${String(lastEnd.getMonth() + 1).padStart(2, '0')}.${String(lastEnd.getDate()).padStart(2, '0')}`;
+    let msg = `영웅의 찬가 ${fs} ~ ${le}\n남은 연대기 일정입니다.\n`;
+
+    upcoming.forEach(({ idx, evt }) => {
+        const start = new Date(evt.startMs);
+        const end = new Date(evt.endMs);
+        const sm = String(start.getMonth() + 1).padStart(2, '0');
+        const sd = String(start.getDate()).padStart(2, '0');
+        const em = String(end.getMonth() + 1).padStart(2, '0');
+        const ed = String(end.getDate()).padStart(2, '0');
+        const status = (evt.startMs <= now) ? "  ⬅️ 진행중" : "";
+        msg += `\n${idx + 1}. ${evt.name}${status}`;
+        msg += `\n   ${sm}/${sd} ${formatTimeHHMM(start)} ~ ${em}/${ed} ${formatTimeHHMM(end)}`;
+    });
+
+    cmd.reply(msg);
+}
+
 // --- 4. 메인 이벤트 리스너 ---
 
 function onMessage(msg) {
@@ -523,6 +614,7 @@ function onCommand(cmd) {
             // 브리핑
             case "오늘": handleToday(cmd); break;
             case "내일": handleTomorrow(cmd); break;
+            case "연대기": handleChronicle(cmd); break;
 
             // 미디어 전송
             case "크븝":
@@ -548,9 +640,9 @@ function onCommand(cmd) {
                 break;
 
             case "명령어":
-                let help = "[라오킹 봇 v1.5]\n\n";
+                let help = "[라오킹 봇 v1.6]\n\n";
                 EVENTS_CONFIG.forEach(e => help += `!${e.command} - ${e.name}\n`);
-                help += "\n[브리핑]\n!오늘 - 오늘의 일정\n!내일 - 내일의 일정\n";
+                help += "\n[브리핑]\n!오늘 - 오늘의 일정\n!내일 - 내일의 일정\n!연대기 - 남은 연대기 일정\n!연대기 시간조정 {+-hhmm}\n";
                 help += "\n[일정]\n!일정등록, !일정삭제, !일정\n!생일등록 {닉네임}, {MMDD}\n!생일제거 {닉네임}\n!생일목록\n";
                 help += "\n[기타]\n!크븝 동맹구도\n!특성 {이름}";
                 cmd.reply(help);
