@@ -1,5 +1,5 @@
 /**
- * [라오킹 봇 - GraalJS 통합 v1.6]
+ * [라오킹 봇 - GraalJS 통합 v1.7]
  * - 환경: MessengerBot R (API2) - v0.7.40a (GraalJS) 이상
  * - 업데이트 내역:
  * v1.0: 기본 이식 (GraalJS)
@@ -9,9 +9,19 @@
  * v1.4: [수정] 주기성 이벤트 명령어에 패배/예외 기간 처리 추가
  * v1.5: [개선] 브리핑 시스템 고도화 (!오늘, !내일), 시간순 통합 정렬, 09:00~09:00 고정 범위
  * v1.6: [신규] !연대기 명령어 추가 (남은 일정 조회, 시간조정)
+ * v1.7: [연동] 유저 차단 시스템 — 관리봇 공유 차단 파일 기반 명령어 차단 체크 추가
  */
 
 const bot = BotManager.getCurrentBot();
+
+// --- 🚫 유저 차단 체크 (관리봇에서 관리하는 공유 파일) ---
+const BLOCKED_USERS_PATH = "sdcard/bot/blocked_users.json";
+function isBlocked(hash) {
+    if (!hash) return false;
+    let raw = FileStream.read(BLOCKED_USERS_PATH);
+    if (!raw) return false;
+    try { return !!JSON.parse(raw)[hash]; } catch (e) { return false; }
+}
 
 // --- 1. 전역 설정 ---
 
@@ -565,7 +575,7 @@ function handleChronicle(cmd) {
     const lastEnd = new Date(FIXED_CHRONICLE[FIXED_CHRONICLE.length - 1].endMs);
     const fs = `${String(firstStart.getFullYear()).slice(2)}.${String(firstStart.getMonth() + 1).padStart(2, '0')}.${String(firstStart.getDate()).padStart(2, '0')}`;
     const le = `${String(lastEnd.getFullYear()).slice(2)}.${String(lastEnd.getMonth() + 1).padStart(2, '0')}.${String(lastEnd.getDate()).padStart(2, '0')}`;
-    let msg = `영웅의 찬가 ${fs} ~ ${le}\n남은 연대기 일정입니다.\n`;
+    let msg = `영웅의 찬가 ${fs} ~ ${le}\n남은 연대기 일정입니다.\n` + "\u200b".repeat(500);
 
     upcoming.forEach(({ idx, evt }) => {
         const start = new Date(evt.startMs);
@@ -595,6 +605,10 @@ function onMessage(msg) {
 function onCommand(cmd) {
     if (!cmd || cmd.channelId == null) return;
     if (!ALLOWED_COMMAND_ROOM_IDS.includes(String(cmd.channelId))) return;
+
+    // 차단된 유저는 명령어 무시
+    let cmdHash = cmd.author.hash ? cmd.author.hash.substring(0, 12) : null;
+    if (isBlocked(cmdHash)) return;
 
     try {
         const eventConfig = EVENT_COMMAND_MAP.get(cmd.command);

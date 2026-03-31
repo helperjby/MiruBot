@@ -5,12 +5,15 @@
  * 오너 해시는 방마다 다르므로 파일 + 하드코딩 병합 관리합니다.
  * (!오너등록 으로 새 방에서 동적 추가 가능)
  *
- * @version 1.1.0
+ * @version 1.2.0
  * v1.0.0  2026-03-20  관리 기능 대폭 추가
  * v1.1.0  2026-03-20  권한 모델 변경
  *   - ADMIN_HASHES → OWNER_HASHES (관리봇은 오너 전용)
  *   - 오너 해시 파일 기반 동적 관리 (!오너등록)
  *   - 핑/방정보/내정보/관리도움만 공개, 나머지 전부 오너 전용
+ * v1.2.0  2026-03-31  유저 차단 시스템 및 오너해시추가 개선
+ *   - !차단, !차단해제, !차단목록 명령어 추가 (공유 파일 기반 크로스봇 차단)
+ *   - !오너해시추가에 해시 인자 직접 입력 지원
  */
 
 // ==========================================================
@@ -23,14 +26,15 @@ const VIEW_MORE_TRIGGER = "\u200b".repeat(500);
 // --- 👑 오너 해시 (하드코딩 기본값, 방마다 다른 해시) ---
 const HASH_LENGTH = 12;
 const OWNER_HASHES_DEFAULT = [
-    "94c9c06f8ad5",
-    "2d391954f81d",
+    "94c9c06f8ad5", //제이
+    "2d391954f81d", //관리자
     "e5a0e976d576"
 ];
 
 // --- 파일 경로 ---
 const OWNER_HASHES_PATH = "sdcard/bot/owner_hashes.json";
 const BOT_ROOMS_PATH = "sdcard/bot/bot_rooms.json";
+const BLOCKED_USERS_PATH = "sdcard/bot/blocked_users.json";
 
 // ==========================================================
 // ⭐ 오너 해시 관리
@@ -68,6 +72,20 @@ function saveOwnerHashes(hashes) {
 
 function isOwner(hash) {
     return !!hash && getOwnerHashes().includes(hash);
+}
+
+// ==========================================================
+// 🚫 유저 차단 관리
+// ==========================================================
+
+function loadBlockedUsers() {
+    let raw = FileStream.read(BLOCKED_USERS_PATH);
+    if (!raw) return {};
+    try { return JSON.parse(raw); } catch (e) { return {}; }
+}
+
+function saveBlockedUsers(data) {
+    FileStream.write(BLOCKED_USERS_PATH, JSON.stringify(data));
 }
 
 // ==========================================================
@@ -565,20 +583,25 @@ function onCommand(cmd) {
         }
 
         case "오너해시추가": {
-            // 기존 오너가 새 방에서 실행 → 현재 해시를 파일에 저장
-            // (이 명령어 자체가 오너 전용이므로, 이미 알려진 해시로 인증된 상태)
+            // 인자가 있으면 해당 해시를, 없으면 본인 해시를 등록
+            let targetHash = cmd.args.length > 0 ? truncHash(cmd.args[0]) : hash;
+            if (!targetHash || !/^[0-9a-f]+$/.test(targetHash)) {
+                cmd.reply("❌ 유효하지 않은 해시입니다.\n(예: !오너해시추가 또는 !오너해시추가 <해시값>)");
+                break;
+            }
+
             let fileRaw = FileStream.read(OWNER_HASHES_PATH);
             let fileHashes = [];
             if (fileRaw) {
                 try { fileHashes = JSON.parse(fileRaw); } catch (e) { fileHashes = []; }
             }
 
-            if (!fileHashes.includes(hash)) {
-                fileHashes.push(hash);
+            if (!fileHashes.includes(targetHash)) {
+                fileHashes.push(targetHash);
                 saveOwnerHashes(fileHashes);
-                cmd.reply(`✅ 현재 방의 해시를 오너 목록에 추가했습니다.\n해시: ${hash}`);
+                cmd.reply("✅ 오너 목록에 추가했습니다.\n해시: " + targetHash);
             } else {
-                cmd.reply("✅ 이미 등록된 해시입니다.");
+                cmd.reply("✅ 이미 등록된 해시입니다: " + targetHash);
             }
             break;
         }
@@ -698,10 +721,165 @@ function onCommand(cmd) {
                     "🔍 유틸 (오너)",
                     "• !해시검색 <닉네임> — 유저 해시 조회",
                     "• !권한테스트 — 파일 I/O 확인",
-                    "• !덤프 — CMD 객체 속성 확인"
+                    "• !덤프 — CMD 객체 속성 확인",
+                    "",
+                    "🚫 유저 차단 (오너)",
+                    "• !차단 <닉네임> — 모든 봇에서 차단",
+                    "• !차단해제 <닉네임> — 차단 해제",
+                    "• !차단목록 — 차단된 유저 목록"
                 );
             }
 
+            cmd.reply(lines.join("\n"));
+            break;
+        }
+
+        // ------------------------------------
+        // 🚫 유저 차단 [오너]
+        // ------------------------------------
+        case "차단": {
+            let targetName = cmd.args.join(" ");
+            if (!targetName) {
+                cmd.reply("❌ 사용법: !차단 <닉네임 또는 해시>");
+                break;
+            }
+
+            let channelIdStr = String(cmd.channelId);
+            let targetHash = null;
+            let resolvedName = targetName;
+
+            // 해시값 직접 입력 (12자 hex)
+            if (/^[0-9a-f]{12}$/.test(targetName)) {
+                targetHash = targetName;
+            } else {
+                // comm_db에서 닉네임 검색
+                let commDbPath = "sdcard/bot/comm_db_" + channelIdStr + ".json";
+                let commDbString = FileStream.read(commDbPath);
+                if (commDbString) {
+                    try {
+                        let commDb = JSON.parse(commDbString);
+                        let normSearch = targetName.replace(/\s/g, "");
+                        // 정확 매칭
+                        for (let h in commDb) {
+                            if (h === "_meta" || !commDb[h].name) continue;
+                            if (commDb[h].name.replace(/\s/g, "") === normSearch) {
+                                targetHash = h;
+                                resolvedName = commDb[h].name;
+                                break;
+                            }
+                        }
+                        // 부분 매칭 (정확 매칭 실패 시)
+                        if (!targetHash) {
+                            for (let h in commDb) {
+                                if (h === "_meta" || !commDb[h].name) continue;
+                                if (commDb[h].name.replace(/\s/g, "").includes(normSearch)) {
+                                    targetHash = h;
+                                    resolvedName = commDb[h].name;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) { /* 파싱 실패 시 무시 */ }
+                }
+            }
+
+            if (!targetHash) {
+                cmd.reply("❌ [" + targetName + "] 유저를 찾을 수 없습니다.\n(대상이 채팅 기록이 있어야 검색됩니다.)");
+                break;
+            }
+
+            if (isOwner(targetHash)) {
+                cmd.reply("❌ 오너는 차단할 수 없습니다.");
+                break;
+            }
+
+            let blocked = loadBlockedUsers();
+            if (blocked[targetHash]) {
+                cmd.reply("❌ [" + resolvedName + "] 이미 차단된 유저입니다.");
+                break;
+            }
+
+            let now = new Date();
+            let ts = now.getFullYear() + "-" +
+                ("0" + (now.getMonth() + 1)).slice(-2) + "-" +
+                ("0" + now.getDate()).slice(-2) + " " +
+                ("0" + now.getHours()).slice(-2) + ":" +
+                ("0" + now.getMinutes()).slice(-2) + ":" +
+                ("0" + now.getSeconds()).slice(-2);
+
+            blocked[targetHash] = {
+                name: resolvedName,
+                blockedBy: cmd.author.name,
+                blockedAt: ts,
+                channelId: channelIdStr
+            };
+            saveBlockedUsers(blocked);
+
+            Log.i("[관리봇] 유저 차단: " + resolvedName + " (" + targetHash + ") by " + cmd.author.name);
+            cmd.reply("🚫 [" + resolvedName + "] 차단 완료\n• 해시: " + targetHash + "\n• 모든 봇 명령어가 차단됩니다.");
+            break;
+        }
+
+        case "차단해제": {
+            let targetName = cmd.args.join(" ");
+            if (!targetName) {
+                cmd.reply("❌ 사용법: !차단해제 <닉네임 또는 해시>");
+                break;
+            }
+
+            let blocked = loadBlockedUsers();
+            let targetHash = null;
+
+            // 해시 직접 입력
+            if (/^[0-9a-f]{12}$/.test(targetName) && blocked[targetName]) {
+                targetHash = targetName;
+            } else {
+                // 닉네임으로 차단 목록에서 검색
+                let normSearch = targetName.replace(/\s/g, "");
+                for (let h in blocked) {
+                    if (blocked[h].name && blocked[h].name.replace(/\s/g, "") === normSearch) {
+                        targetHash = h;
+                        break;
+                    }
+                }
+                if (!targetHash) {
+                    for (let h in blocked) {
+                        if (blocked[h].name && blocked[h].name.replace(/\s/g, "").includes(normSearch)) {
+                            targetHash = h;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!targetHash) {
+                cmd.reply("❌ 차단 목록에서 [" + targetName + "]을(를) 찾을 수 없습니다.");
+                break;
+            }
+
+            let unblockedName = blocked[targetHash].name;
+            delete blocked[targetHash];
+            saveBlockedUsers(blocked);
+
+            Log.i("[관리봇] 유저 차단해제: " + unblockedName + " (" + targetHash + ") by " + cmd.author.name);
+            cmd.reply("✅ [" + unblockedName + "] 차단 해제 완료");
+            break;
+        }
+
+        case "차단목록": {
+            let blocked = loadBlockedUsers();
+            let keys = Object.keys(blocked);
+            if (keys.length === 0) {
+                cmd.reply("📋 차단된 유저가 없습니다.");
+                break;
+            }
+
+            let lines = ["🚫 차단 유저 목록 (" + keys.length + "명)"];
+            for (let i = 0; i < keys.length; i++) {
+                let h = keys[i];
+                let b = blocked[h];
+                lines.push((i + 1) + ". " + b.name + " (" + h + ") - " + b.blockedAt);
+            }
             cmd.reply(lines.join("\n"));
             break;
         }

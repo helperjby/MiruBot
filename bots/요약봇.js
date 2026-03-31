@@ -1,6 +1,6 @@
 /**
  * @description 채팅 로그 수집, 요약 및 통계 봇
- * @version v1.2.0
+ * @version v1.4.0
  *
  * - 모든 메시지를 인메모리 버퍼에 저장
  * - 50개 도달 또는 60초 경과 시 서버로 일괄 전송 (배치 flush)
@@ -22,11 +22,21 @@
  *                         시간대별·요일별 바 차트, Gemini 인물평 분석
  * - v1.2.0 (2026-03-20) : 인물평을 !채팅통계에서 분리하여 !인물평 명령어로 독립
  * - v1.3.0 (2026-03-25) : !나이 명령어 추가 — 층화 샘플링 기반 LLM 나이 추정
+ * - v1.4.0 (2026-03-31) : 유저 차단 시스템 연동 — 관리봇 공유 차단 파일 기반 명령어 차단 체크 추가
  */
 
 /* ==================== 전역 상수/변수 ==================== */
 
 const bot = BotManager.getCurrentBot();
+
+// --- 🚫 유저 차단 체크 (관리봇에서 관리하는 공유 파일) ---
+const BLOCKED_USERS_PATH = "sdcard/bot/blocked_users.json";
+function isBlocked(hash) {
+    if (!hash) return false;
+    let raw = FileStream.read(BLOCKED_USERS_PATH);
+    if (!raw) return false;
+    try { return !!JSON.parse(raw)[hash]; } catch (e) { return false; }
+}
 const Thread = java.lang.Thread;
 const Jsoup = org.jsoup.Jsoup;
 
@@ -248,6 +258,10 @@ bot.setCommandPrefix("!");
 
 bot.addListener(Event.COMMAND, function (cmd) {
     try {
+        // 차단된 유저는 명령어 무시
+        let cmdHash = cmd.author.hash ? cmd.author.hash.substring(0, 12) : null;
+        if (isBlocked(cmdHash)) return;
+
         // --- !DB 토글 명령어 ---
         if (cmd.command === "DB") {
             let channelId = String(cmd.channelId);

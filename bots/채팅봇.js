@@ -14,6 +14,8 @@
 //   - !정보 출력에 칭호 표시
 //   - 월간 XP 추적 (monthlyXp/monthlyXpMonth 필드, 월 변경 시 자동 리셋)
 //   - !랭킹채팅 커맨드 신설: 누적 TOP15 + 월간 TOP15 한 메시지 출력
+// v1.5.0  2026-03-31  유저 차단 시스템 연동
+//   - 관리봇 공유 차단 파일(blocked_users.json) 기반 명령어 차단 체크 추가
 // ==========================================================
 
 const bot = BotManager.getCurrentBot();
@@ -56,6 +58,15 @@ function truncHash(h) {
 
 function isAdmin(hash) {
     return !!hash && ADMIN_HASHES.includes(truncHash(hash));
+}
+
+// --- 🚫 유저 차단 체크 (관리봇에서 관리하는 공유 파일) ---
+const BLOCKED_USERS_PATH = "sdcard/bot/blocked_users.json";
+function isBlocked(hash) {
+    if (!hash) return false;
+    let raw = FileStream.read(BLOCKED_USERS_PATH);
+    if (!raw) return false;
+    try { return !!JSON.parse(raw)[hash]; } catch (e) { return false; }
 }
 
 function getActiveRooms() {
@@ -229,6 +240,9 @@ function onCommand(cmd) {
     try {
     let chIdStr = String(cmd.channelId);
     let cmdHash = truncHash(cmd.author.hash);
+
+    // 차단된 유저는 명령어 무시 (관리자 제외)
+    if (!isAdmin(cmdHash) && isBlocked(cmdHash)) return;
 
     if (cmd.command === "활성화") {
         if (!isAdmin(cmdHash)) return cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
