@@ -22,14 +22,31 @@ from app.database import init_db
 from app.services.chat_service import insert_chat_logs
 from app.services.summarize_service import summarize_chat
 from app.services.stats_service import get_chat_stats, get_personality, get_age_estimate
+from app.services.gersang_service import run_scrape_cycle, get_new_entries, SCRAPE_INTERVAL
+import asyncio
 # --- ▲▲▲ 라이브러리 임포트 ▲▲▲ ---
 
 app = FastAPI(title="URL 요약 및 번역 API", description="카카오톡 메신저봇R과 연동되는 API")
 
 
+GERSANG_SERVER_ID = os.getenv("GERSANG_SERVER_ID", "7")
+
+
+async def satong_scrape_loop():
+    """5분마다 사통팔달 스크래핑을 수행하는 백그라운드 루프"""
+    while True:
+        try:
+            await asyncio.to_thread(run_scrape_cycle, GERSANG_SERVER_ID)
+        except Exception as e:
+            print(f"[main.py] satong_scrape_loop 오류: {e}")
+        await asyncio.sleep(SCRAPE_INTERVAL)
+
+
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     init_db()
+    asyncio.create_task(satong_scrape_loop())
+    print("[main.py] 사통팔달 백그라운드 스크래핑 시작")
 
 # --- ▼▼▼ Static "메뉴판" 마운트 ▼▼▼ ---
 # 웹 경로 "/static"을 Docker 내부 경로 "/app/static_files"와 연결
@@ -362,6 +379,22 @@ def handle_chat_personality(request: ChatPersonalityRequest):
             "personality_text": None,
             "candidates": None,
         })
+
+
+# --- ▼▼▼ 거상 사통팔달 API ▼▼▼ ---
+
+@app.get("/gersang/satong/new")
+def get_satong_new():
+    """신규 사통팔달 항목을 반환합니다 (1회 소비 - 가져간 뒤 비워짐)."""
+    try:
+        result = get_new_entries()
+        return JSONResponse(content=result)
+    except Exception as e:
+        print(f"[main.py] gersang/satong/new Error: {e}")
+        return JSONResponse(content={"new_count": 0, "entries": [], "error": str(e)})
+
+
+# --- ▲▲▲ 거상 사통팔달 API ▲▲▲ ---
 
 
 @app.post("/chat-age")
