@@ -49,15 +49,17 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS yukeuijeon_items (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            category        TEXT NOT NULL DEFAULT 'item',
             item_name       TEXT NOT NULL,
             item_name_raw   TEXT NOT NULL,
             quantity        INTEGER NOT NULL,
             price           INTEGER NOT NULL,
             seller          TEXT NOT NULL,
             registered_at   TEXT NOT NULL,
-            scraped_at      TEXT DEFAULT (datetime('now','localtime')),
-            UNIQUE(item_name, quantity, price, seller)
+            scraped_at      TEXT DEFAULT (datetime('now','localtime'))
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_yuk_unique
+            ON yukeuijeon_items(category, item_name, quantity, price, seller);
         CREATE INDEX IF NOT EXISTS idx_yuk_item_name ON yukeuijeon_items(item_name);
         CREATE INDEX IF NOT EXISTS idx_yuk_scraped ON yukeuijeon_items(scraped_at);
 
@@ -71,4 +73,13 @@ def init_db():
         );
     """)
     conn.commit()
+
+    # --- 마이그레이션: yukeuijeon_items에 category 컬럼 추가 ---
+    try:
+        conn.execute("ALTER TABLE yukeuijeon_items ADD COLUMN category TEXT NOT NULL DEFAULT 'item'")
+        conn.commit()
+        print("[database] yukeuijeon_items.category 컬럼 마이그레이션 완료")
+    except sqlite3.OperationalError:
+        pass  # 이미 존재하거나 신규 테이블
+
     print("[database] chat_logs, user_features, yukeuijeon 테이블 준비 완료")

@@ -68,8 +68,8 @@ def _remove_spaces(text: str) -> str:
 
 # ──────────────────────── 스크래핑 ────────────────────────
 
-def scrape_page(server_id: str = "7", page: int = 1) -> list[dict] | None:
-    """육의전 단일 페이지 스크래핑."""
+def scrape_page(server_id: str = "7", page: int = 1, category: str = "item") -> list[dict] | None:
+    """육의전 단일 페이지 스크래핑. category: 'item' 또는 'unit'."""
     try:
         resp = requests.get(
             YUKEUIJEON_URL,
@@ -77,7 +77,7 @@ def scrape_page(server_id: str = "7", page: int = 1) -> list[dict] | None:
                 "serverId": server_id,
                 "page": page,
                 "orderDirection": "desc",
-                "category": "item",
+                "category": category,
                 "searchType": "archived",
             },
             headers={"User-Agent": USER_AGENT},
@@ -108,6 +108,7 @@ def scrape_page(server_id: str = "7", page: int = 1) -> list[dict] | None:
 
             abs_dt = _parse_relative_time(time_text, now)
             entries.append({
+                "category": category,
                 "item_name": _remove_spaces(name_raw),
                 "item_name_raw": name_raw,
                 "quantity": int(re.sub(r"[^\d]", "", qty_text) or "0"),
@@ -122,18 +123,18 @@ def scrape_page(server_id: str = "7", page: int = 1) -> list[dict] | None:
         return None
 
 
-def scrape_pages(server_id: str = "7", max_pages: int = 5) -> list[dict]:
+def scrape_pages(server_id: str = "7", max_pages: int = 5, category: str = "item") -> list[dict]:
     """여러 페이지 순회. 빈 페이지 시 조기 종료."""
     all_entries = []
     for page in range(1, max_pages + 1):
-        entries = scrape_page(server_id, page)
+        entries = scrape_page(server_id, page, category)
         if entries is None or len(entries) == 0:
             break
         all_entries.extend(entries)
     return all_entries
 
 
-def scrape_pages_batched(server_id: str = "7", max_pages: int = 800) -> list[dict]:
+def scrape_pages_batched(server_id: str = "7", max_pages: int = 800, category: str = "item") -> list[dict]:
     """배치 단위 스크래핑 (초기 대량 수집용). 배치 간 대기로 서버 부하 분산."""
     all_entries = []
     total_batches = (max_pages + BATCH_SIZE - 1) // BATCH_SIZE
@@ -145,7 +146,7 @@ def scrape_pages_batched(server_id: str = "7", max_pages: int = 800) -> list[dic
         empty_page = False
 
         for page in range(current_page, batch_end + 1):
-            entries = scrape_page(server_id, page)
+            entries = scrape_page(server_id, page, category)
             if entries is None or len(entries) == 0:
                 empty_page = True
                 break
@@ -154,12 +155,12 @@ def scrape_pages_batched(server_id: str = "7", max_pages: int = 800) -> list[dic
         if batch_entries:
             inserted, _ = save_items(batch_entries)
             print(
-                f"[yukeuijeon] 초기 스크래핑 배치 {batch_num}/{total_batches} "
+                f"[yukeuijeon] 초기 스크래핑({category}) 배치 {batch_num}/{total_batches} "
                 f"({batch_end}페이지 완료, {inserted}건 저장)"
             )
 
         if empty_page:
-            print(f"[yukeuijeon] 초기 스크래핑 완료 (page {current_page + len(batch_entries) // 10}에서 종료)")
+            print(f"[yukeuijeon] 초기 스크래핑({category}) 완료 (page {current_page + len(batch_entries) // 10}에서 종료)")
             break
 
         current_page = batch_end + 1
@@ -183,9 +184,10 @@ def save_items(items: list[dict]) -> tuple[int, list[dict]]:
     for item in items:
         cursor = conn.execute(
             """INSERT OR IGNORE INTO yukeuijeon_items
-               (item_name, item_name_raw, quantity, price, seller, registered_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (category, item_name, item_name_raw, quantity, price, seller, registered_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
+                item.get("category", "item"),
                 item["item_name"],
                 item["item_name_raw"],
                 item["quantity"],
@@ -218,7 +220,7 @@ def search_items(keyword: str) -> list[dict]:
     conn = get_connection()
     clean_keyword = _remove_spaces(keyword)
     rows = conn.execute(
-        """SELECT item_name_raw, quantity, price, seller, registered_at
+        """SELECT category, item_name_raw, quantity, price, seller, registered_at
            FROM yukeuijeon_items
            WHERE item_name LIKE ?
            ORDER BY scraped_at DESC
@@ -228,6 +230,7 @@ def search_items(keyword: str) -> list[dict]:
 
     return [
         {
+            "category": row["category"],
             "item_name": row["item_name_raw"],
             "quantity": row["quantity"],
             "price": row["price"],
@@ -251,6 +254,21 @@ def register_alarm(channel_id: str, keyword: str) -> bool:
     )
     conn.commit()
     return cursor.rowcount > 0
+
+
+def register_alarms(channel_id: str, keywords: list[str]) -> dict:
+    """여러 알람 일괄 등록. 각 키워드별 등록 결과 반환."""
+    registered = []
+    duplicated = []
+    for kw in keywords:
+        kw = kw.strip()
+        if not kw:
+            continue
+        if register_alarm(channel_id, kw):
+            registered.append(kw)
+        else:
+            duplicated.append(kw)
+    return {"registered": registered, "duplicated": duplicated}
 
 
 def unregister_alarm(channel_id: str, keyword: str) -> bool:
@@ -320,31 +338,36 @@ def get_pending_notifications() -> dict:
 
 # ──────────────────────── 메인 사이클 ────────────────────────
 
+CATEGORIES = ["item", "unit"]
+
+
 def run_yukeuijeon_cycle(server_id: str = "7", max_pages: int = REGULAR_MAX_PAGES):
-    """스크래핑 1회 수행: 정리 → 스크래핑 → 저장 → 알람 체크."""
+    """스크래핑 1회 수행: 정리 → 카테고리별 스크래핑 → 저장 → 알람 체크."""
     global _pending_notifications, _initial_scrape_done
 
     cleanup_old_items()
 
     # 초기 대량 스크래핑
     if not _initial_scrape_done and max_pages > REGULAR_MAX_PAGES:
-        print(f"[yukeuijeon] 초기 대량 스크래핑 시작 ({max_pages}페이지, 배치 {BATCH_SIZE}페이지씩)")
-        scrape_pages_batched(server_id, max_pages)
+        for cat in CATEGORIES:
+            print(f"[yukeuijeon] 초기 대량 스크래핑({cat}) 시작 ({max_pages}페이지, 배치 {BATCH_SIZE}페이지씩)")
+            scrape_pages_batched(server_id, max_pages, cat)
+            print(f"[yukeuijeon] 초기 대량 스크래핑({cat}) 완료")
         _initial_scrape_done = True
-        print("[yukeuijeon] 초기 대량 스크래핑 완료")
         return
 
-    # 일반 주기적 스크래핑
-    entries = scrape_pages(server_id, max_pages)
-    if not entries:
-        print("[yukeuijeon] 스크래핑 결과 없음")
-        return
+    # 일반 주기적 스크래핑 (카테고리별)
+    all_new_items = []
+    for cat in CATEGORIES:
+        entries = scrape_pages(server_id, max_pages, cat)
+        if not entries:
+            continue
+        inserted, new_items = save_items(entries)
+        print(f"[yukeuijeon] 스크래핑({cat}) 완료: {len(entries)}건 조회, {inserted}건 신규")
+        all_new_items.extend(new_items)
 
-    inserted, new_items = save_items(entries)
-    print(f"[yukeuijeon] 스크래핑 완료: {len(entries)}건 조회, {inserted}건 신규")
-
-    if new_items:
-        notifications = check_alarms(new_items)
+    if all_new_items:
+        notifications = check_alarms(all_new_items)
         if notifications:
             _pending_notifications.extend(notifications)
             total_matched = sum(len(n["matched_items"]) for n in notifications)

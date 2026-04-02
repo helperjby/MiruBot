@@ -25,7 +25,8 @@ from app.services.stats_service import get_chat_stats, get_personality, get_age_
 from app.services.gersang_service import run_scrape_cycle, get_new_entries, SCRAPE_INTERVAL
 from app.services.yukeuijeon_service import (
     run_yukeuijeon_cycle, search_items as yuk_search_items,
-    register_alarm as yuk_register_alarm, unregister_alarm as yuk_unregister_alarm,
+    register_alarm as yuk_register_alarm, register_alarms as yuk_register_alarms,
+    unregister_alarm as yuk_unregister_alarm,
     list_alarms as yuk_list_alarms, get_pending_notifications as yuk_get_notifications,
     SCRAPE_INTERVAL as YUK_SCRAPE_INTERVAL, INITIAL_MAX_PAGES, REGULAR_MAX_PAGES,
 )
@@ -436,12 +437,20 @@ def yukeuijeon_search(keyword: str = Query(..., min_length=1)):
 
 @app.post("/gersang/yukeuijeon/alarm")
 def yukeuijeon_alarm_register(request: YukeuijeonAlarmRequest):
-    """육의전 알람 등록."""
+    """육의전 알람 등록. 쉼표로 구분된 복수 키워드 지원."""
     try:
-        success = yuk_register_alarm(request.channel_id, request.keyword)
-        if success:
-            return JSONResponse(content={"success": True, "message": f"'{request.keyword}' 알람이 등록되었습니다."})
-        return JSONResponse(content={"success": False, "message": f"'{request.keyword}' 알람이 이미 등록되어 있습니다."})
+        keywords = [kw.strip() for kw in request.keyword.split(",") if kw.strip()]
+        if not keywords:
+            return JSONResponse(content={"success": False, "message": "키워드를 입력해주세요."})
+
+        result = yuk_register_alarms(request.channel_id, keywords)
+        parts = []
+        if result["registered"]:
+            parts.append(f"등록: {', '.join(result['registered'])}")
+        if result["duplicated"]:
+            parts.append(f"이미 등록됨: {', '.join(result['duplicated'])}")
+        message = " | ".join(parts)
+        return JSONResponse(content={"success": len(result["registered"]) > 0, "message": message})
     except Exception as e:
         print(f"[main.py] yukeuijeon/alarm register Error: {e}")
         return JSONResponse(content={"success": False, "message": str(e)})
@@ -449,12 +458,27 @@ def yukeuijeon_alarm_register(request: YukeuijeonAlarmRequest):
 
 @app.delete("/gersang/yukeuijeon/alarm")
 def yukeuijeon_alarm_unregister(request: YukeuijeonAlarmRequest):
-    """육의전 알람 해제."""
+    """육의전 알람 해제. 쉼표로 구분된 복수 키워드 지원."""
     try:
-        success = yuk_unregister_alarm(request.channel_id, request.keyword)
-        if success:
-            return JSONResponse(content={"success": True, "message": f"'{request.keyword}' 알람이 해제되었습니다."})
-        return JSONResponse(content={"success": False, "message": f"'{request.keyword}' 알람을 찾을 수 없습니다."})
+        keywords = [kw.strip() for kw in request.keyword.split(",") if kw.strip()]
+        if not keywords:
+            return JSONResponse(content={"success": False, "message": "키워드를 입력해주세요."})
+
+        removed = []
+        not_found = []
+        for kw in keywords:
+            if yuk_unregister_alarm(request.channel_id, kw):
+                removed.append(kw)
+            else:
+                not_found.append(kw)
+
+        parts = []
+        if removed:
+            parts.append(f"해제: {', '.join(removed)}")
+        if not_found:
+            parts.append(f"찾을 수 없음: {', '.join(not_found)}")
+        message = " | ".join(parts)
+        return JSONResponse(content={"success": len(removed) > 0, "message": message})
     except Exception as e:
         print(f"[main.py] yukeuijeon/alarm unregister Error: {e}")
         return JSONResponse(content={"success": False, "message": str(e)})

@@ -175,7 +175,11 @@ function handleYukSearch(cmd) {
             let limit = Math.min(data.count, 10);
             for (let i = 0; i < limit; i++) {
                 let item = data.items[i];
-                msg += item.item_name + " | " + item.quantity + "개";
+                if (item.category === "unit") {
+                    msg += item.item_name + " | Lv." + item.quantity;
+                } else {
+                    msg += item.item_name + " | " + item.quantity + "개";
+                }
                 msg += " | " + formatPrice(item.price) + "원";
                 msg += " | " + item.seller + "\n";
             }
@@ -332,7 +336,11 @@ function checkAndSendYukNotifications(msg) {
                     let item = items[m];
                     reply += item.seller + ", ";
                     reply += formatPrice(item.price) + "원, ";
-                    reply += item.quantity + "개, ";
+                    if (item.category === "unit") {
+                        reply += "Lv." + item.quantity + ", ";
+                    } else {
+                        reply += item.quantity + "개, ";
+                    }
                     reply += item.registered_at + "\n";
                 }
             }
