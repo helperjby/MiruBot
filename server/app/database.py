@@ -21,6 +21,16 @@ def get_connection() -> sqlite3.Connection:
 def init_db():
     """DB 테이블 및 인덱스를 생성합니다."""
     conn = get_connection()
+
+    # --- 마이그레이션: 기존 yukeuijeon_items에 category 컬럼 추가 ---
+    # executescript보다 먼저 실행해야 category 참조 인덱스가 동작함
+    try:
+        conn.execute("ALTER TABLE yukeuijeon_items ADD COLUMN category TEXT NOT NULL DEFAULT 'item'")
+        conn.commit()
+        print("[database] yukeuijeon_items.category 컬럼 마이그레이션 완료")
+    except sqlite3.OperationalError:
+        pass  # 테이블 없거나 이미 존재
+
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS chat_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,13 +83,4 @@ def init_db():
         );
     """)
     conn.commit()
-
-    # --- 마이그레이션: yukeuijeon_items에 category 컬럼 추가 ---
-    try:
-        conn.execute("ALTER TABLE yukeuijeon_items ADD COLUMN category TEXT NOT NULL DEFAULT 'item'")
-        conn.commit()
-        print("[database] yukeuijeon_items.category 컬럼 마이그레이션 완료")
-    except sqlite3.OperationalError:
-        pass  # 이미 존재하거나 신규 테이블
-
     print("[database] chat_logs, user_features, yukeuijeon 테이블 준비 완료")
