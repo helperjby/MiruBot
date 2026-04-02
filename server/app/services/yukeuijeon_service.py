@@ -29,7 +29,6 @@ BATCH_DELAY = 30          # 배치 간 대기 시간(초)
 
 # --- 알림 버퍼 ---
 _pending_notifications = []
-_initial_scrape_done = False
 
 
 # ──────────────────────── 파싱 유틸 ────────────────────────
@@ -341,22 +340,32 @@ def get_pending_notifications() -> dict:
 CATEGORIES = ["item", "unit"]
 
 
+def _has_existing_data() -> bool:
+    """DB에 육의전 데이터가 존재하는지 확인."""
+    conn = get_connection()
+    row = conn.execute("SELECT COUNT(*) AS cnt FROM yukeuijeon_items").fetchone()
+    return row["cnt"] > 0
+
+
+def run_initial_scrape(server_id: str = "7", max_pages: int = INITIAL_MAX_PAGES):
+    """초기 대량 스크래핑. DB에 데이터가 이미 있으면 건너뜀."""
+    if _has_existing_data():
+        print("[yukeuijeon] DB에 기존 데이터 존재, 초기 스크래핑 생략")
+        return
+
+    cleanup_old_items()
+    for cat in CATEGORIES:
+        print(f"[yukeuijeon] 초기 대량 스크래핑({cat}) 시작 ({max_pages}페이지, 배치 {BATCH_SIZE}페이지씩)")
+        scrape_pages_batched(server_id, max_pages, cat)
+        print(f"[yukeuijeon] 초기 대량 스크래핑({cat}) 완료")
+
+
 def run_yukeuijeon_cycle(server_id: str = "7", max_pages: int = REGULAR_MAX_PAGES):
     """스크래핑 1회 수행: 정리 → 카테고리별 스크래핑 → 저장 → 알람 체크."""
-    global _pending_notifications, _initial_scrape_done
+    global _pending_notifications
 
     cleanup_old_items()
 
-    # 초기 대량 스크래핑
-    if not _initial_scrape_done and max_pages > REGULAR_MAX_PAGES:
-        for cat in CATEGORIES:
-            print(f"[yukeuijeon] 초기 대량 스크래핑({cat}) 시작 ({max_pages}페이지, 배치 {BATCH_SIZE}페이지씩)")
-            scrape_pages_batched(server_id, max_pages, cat)
-            print(f"[yukeuijeon] 초기 대량 스크래핑({cat}) 완료")
-        _initial_scrape_done = True
-        return
-
-    # 일반 주기적 스크래핑 (카테고리별)
     all_new_items = []
     for cat in CATEGORIES:
         entries = scrape_pages(server_id, max_pages, cat)

@@ -24,11 +24,12 @@ from app.services.summarize_service import summarize_chat
 from app.services.stats_service import get_chat_stats, get_personality, get_age_estimate
 from app.services.gersang_service import run_scrape_cycle, get_new_entries, SCRAPE_INTERVAL
 from app.services.yukeuijeon_service import (
-    run_yukeuijeon_cycle, search_items as yuk_search_items,
+    run_yukeuijeon_cycle, run_initial_scrape as yuk_initial_scrape,
+    search_items as yuk_search_items,
     register_alarm as yuk_register_alarm, register_alarms as yuk_register_alarms,
     unregister_alarm as yuk_unregister_alarm,
     list_alarms as yuk_list_alarms, get_pending_notifications as yuk_get_notifications,
-    SCRAPE_INTERVAL as YUK_SCRAPE_INTERVAL, INITIAL_MAX_PAGES, REGULAR_MAX_PAGES,
+    SCRAPE_INTERVAL as YUK_SCRAPE_INTERVAL,
 )
 import asyncio
 # --- ▲▲▲ 라이브러리 임포트 ▲▲▲ ---
@@ -50,10 +51,10 @@ async def satong_scrape_loop():
 
 
 async def yukeuijeon_scrape_loop():
-    """육의전 스크래핑: 초기 대량 수집 후 5분마다 최신 페이지 스크래핑"""
-    # 초기 대량 스크래핑 (배치 단위, rate limiting)
+    """육의전 스크래핑: DB 비어있으면 초기 수집, 이후 5분마다 최신 페이지"""
+    # 초기 대량 스크래핑 (DB에 데이터 있으면 자동 생략)
     try:
-        await asyncio.to_thread(run_yukeuijeon_cycle, GERSANG_SERVER_ID, INITIAL_MAX_PAGES)
+        await asyncio.to_thread(yuk_initial_scrape, GERSANG_SERVER_ID)
     except Exception as e:
         print(f"[main.py] yukeuijeon 초기 스크래핑 오류: {e}")
 
@@ -61,7 +62,7 @@ async def yukeuijeon_scrape_loop():
     while True:
         await asyncio.sleep(YUK_SCRAPE_INTERVAL)
         try:
-            await asyncio.to_thread(run_yukeuijeon_cycle, GERSANG_SERVER_ID, REGULAR_MAX_PAGES)
+            await asyncio.to_thread(run_yukeuijeon_cycle, GERSANG_SERVER_ID)
         except Exception as e:
             print(f"[main.py] yukeuijeon_scrape_loop 오류: {e}")
 
