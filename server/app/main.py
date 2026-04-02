@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles # 중복 제거 후 추가
 from app.models import (
     MessageRequest, SummaryResponse, TranslateRequest, TranslationResponse,
     ChatLogBatchRequest, ChatSummarizeRequest, ChatStatsRequest, ChatPersonalityRequest,
-    ChatAgeRequest,
+    ChatAgeRequest, YukeuijeonAlarmRequest,
 )
 from app.services.web_service import (
     process_url_content,
@@ -23,6 +23,12 @@ from app.services.chat_service import insert_chat_logs
 from app.services.summarize_service import summarize_chat
 from app.services.stats_service import get_chat_stats, get_personality, get_age_estimate
 from app.services.gersang_service import run_scrape_cycle, get_new_entries, SCRAPE_INTERVAL
+from app.services.yukeuijeon_service import (
+    run_yukeuijeon_cycle, search_items as yuk_search_items,
+    register_alarm as yuk_register_alarm, unregister_alarm as yuk_unregister_alarm,
+    list_alarms as yuk_list_alarms, get_pending_notifications as yuk_get_notifications,
+    SCRAPE_INTERVAL as YUK_SCRAPE_INTERVAL, INITIAL_MAX_PAGES, REGULAR_MAX_PAGES,
+)
 import asyncio
 # --- ▲▲▲ 라이브러리 임포트 ▲▲▲ ---
 
@@ -42,11 +48,29 @@ async def satong_scrape_loop():
         await asyncio.sleep(SCRAPE_INTERVAL)
 
 
+async def yukeuijeon_scrape_loop():
+    """육의전 스크래핑: 초기 대량 수집 후 5분마다 최신 페이지 스크래핑"""
+    # 초기 대량 스크래핑 (배치 단위, rate limiting)
+    try:
+        await asyncio.to_thread(run_yukeuijeon_cycle, GERSANG_SERVER_ID, INITIAL_MAX_PAGES)
+    except Exception as e:
+        print(f"[main.py] yukeuijeon 초기 스크래핑 오류: {e}")
+
+    # 이후 주기적 스크래핑
+    while True:
+        await asyncio.sleep(YUK_SCRAPE_INTERVAL)
+        try:
+            await asyncio.to_thread(run_yukeuijeon_cycle, GERSANG_SERVER_ID, REGULAR_MAX_PAGES)
+        except Exception as e:
+            print(f"[main.py] yukeuijeon_scrape_loop 오류: {e}")
+
+
 @app.on_event("startup")
 async def on_startup():
     init_db()
     asyncio.create_task(satong_scrape_loop())
-    print("[main.py] 사통팔달 백그라운드 스크래핑 시작")
+    asyncio.create_task(yukeuijeon_scrape_loop())
+    print("[main.py] 사통팔달 · 육의전 백그라운드 스크래핑 시작")
 
 # --- ▼▼▼ Static "메뉴판" 마운트 ▼▼▼ ---
 # 웹 경로 "/static"을 Docker 내부 경로 "/app/static_files"와 연결
@@ -395,6 +419,69 @@ def get_satong_new():
 
 
 # --- ▲▲▲ 거상 사통팔달 API ▲▲▲ ---
+
+
+# --- ▼▼▼ 거상 육의전 API ▼▼▼ ---
+
+@app.get("/gersang/yukeuijeon/search")
+def yukeuijeon_search(keyword: str = Query(..., min_length=1)):
+    """육의전 아이템 검색 (부분일치)."""
+    try:
+        items = yuk_search_items(keyword)
+        return JSONResponse(content={"count": len(items), "items": items})
+    except Exception as e:
+        print(f"[main.py] yukeuijeon/search Error: {e}")
+        return JSONResponse(content={"count": 0, "items": [], "error": str(e)})
+
+
+@app.post("/gersang/yukeuijeon/alarm")
+def yukeuijeon_alarm_register(request: YukeuijeonAlarmRequest):
+    """육의전 알람 등록."""
+    try:
+        success = yuk_register_alarm(request.channel_id, request.keyword)
+        if success:
+            return JSONResponse(content={"success": True, "message": f"'{request.keyword}' 알람이 등록되었습니다."})
+        return JSONResponse(content={"success": False, "message": f"'{request.keyword}' 알람이 이미 등록되어 있습니다."})
+    except Exception as e:
+        print(f"[main.py] yukeuijeon/alarm register Error: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)})
+
+
+@app.delete("/gersang/yukeuijeon/alarm")
+def yukeuijeon_alarm_unregister(request: YukeuijeonAlarmRequest):
+    """육의전 알람 해제."""
+    try:
+        success = yuk_unregister_alarm(request.channel_id, request.keyword)
+        if success:
+            return JSONResponse(content={"success": True, "message": f"'{request.keyword}' 알람이 해제되었습니다."})
+        return JSONResponse(content={"success": False, "message": f"'{request.keyword}' 알람을 찾을 수 없습니다."})
+    except Exception as e:
+        print(f"[main.py] yukeuijeon/alarm unregister Error: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)})
+
+
+@app.get("/gersang/yukeuijeon/alarms")
+def yukeuijeon_alarm_list(channel_id: str = Query(..., min_length=1)):
+    """육의전 알람 목록 조회."""
+    try:
+        alarms = yuk_list_alarms(channel_id)
+        return JSONResponse(content={"count": len(alarms), "alarms": alarms})
+    except Exception as e:
+        print(f"[main.py] yukeuijeon/alarms Error: {e}")
+        return JSONResponse(content={"count": 0, "alarms": [], "error": str(e)})
+
+
+@app.get("/gersang/yukeuijeon/notifications")
+def yukeuijeon_notifications():
+    """육의전 알람 알림 소비 (1회성)."""
+    try:
+        result = yuk_get_notifications()
+        return JSONResponse(content=result)
+    except Exception as e:
+        print(f"[main.py] yukeuijeon/notifications Error: {e}")
+        return JSONResponse(content={"count": 0, "notifications": [], "error": str(e)})
+
+# --- ▲▲▲ 거상 육의전 API ▲▲▲ ---
 
 
 @app.post("/chat-age")

@@ -7,9 +7,11 @@
 
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 from bs4 import BeautifulSoup
+
+KST = timezone(timedelta(hours=9))
 
 SATONG_URL = "https://geota.co.kr/gersang/satongpaldal"
 USER_AGENT = (
@@ -68,7 +70,7 @@ def scrape_satong(server_id: str = "7") -> list[dict] | None:
             print(f"[gersang] HTTP {resp.status_code}")
             return None
 
-        now = datetime.now()
+        now = datetime.now(KST)
         soup = BeautifulSoup(resp.text, "html.parser")
         rows = soup.select("div.flex.min-h-10")
 

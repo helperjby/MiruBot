@@ -53,3 +53,8 @@ class ChatPersonalityRequest(BaseModel):
 class ChatAgeRequest(BaseModel):
     channel_id: str
     nickname: str
+
+
+class YukeuijeonAlarmRequest(BaseModel):
+    channel_id: str
+    keyword: str

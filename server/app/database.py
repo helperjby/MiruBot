@@ -46,6 +46,29 @@ def init_db():
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(channel_id, user_hash)
         );
+
+        CREATE TABLE IF NOT EXISTS yukeuijeon_items (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name       TEXT NOT NULL,
+            item_name_raw   TEXT NOT NULL,
+            quantity        INTEGER NOT NULL,
+            price           INTEGER NOT NULL,
+            seller          TEXT NOT NULL,
+            registered_at   TEXT NOT NULL,
+            scraped_at      TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(item_name, quantity, price, seller)
+        );
+        CREATE INDEX IF NOT EXISTS idx_yuk_item_name ON yukeuijeon_items(item_name);
+        CREATE INDEX IF NOT EXISTS idx_yuk_scraped ON yukeuijeon_items(scraped_at);
+
+        CREATE TABLE IF NOT EXISTS yukeuijeon_alarms (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id      TEXT NOT NULL,
+            keyword         TEXT NOT NULL,
+            keyword_raw     TEXT NOT NULL,
+            created_at      TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(channel_id, keyword)
+        );
     """)
     conn.commit()
-    print("[database] chat_logs, user_features 테이블 준비 완료")
+    print("[database] chat_logs, user_features, yukeuijeon 테이블 준비 완료")
