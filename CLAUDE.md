@@ -28,3 +28,4 @@
 | `bots/migration.md` | Rhino JS → Graal JS 마이그레이션 가이드 |
 | `bots/version_issue.md` | 메신저봇R 버전별 알려진 이슈 |
 | `bots/faq.md` | 자주 발생하는 문의 및 해결 방법 |
+| `bots/<봇이름>.md` | 각 봇의 상세 기능, 명령어, 변경 이력 |
