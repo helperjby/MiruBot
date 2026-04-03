@@ -58,3 +58,5 @@ class ChatAgeRequest(BaseModel):
 class YukeuijeonAlarmRequest(BaseModel):
     channel_id: str
     keyword: str
+    user_hash: str = ""
+    user_name: str = ""

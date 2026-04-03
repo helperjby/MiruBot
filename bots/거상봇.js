@@ -1,5 +1,5 @@
 /**
- * 거상봇 v2.0
+ * 거상봇 v2.1
  * - 환경: MessengerBot R (API2) - v0.7.41-alpha 이상
  *
  * 기능
@@ -8,9 +8,10 @@
  *
  * 명령어
  * - !육의전 <이름>: DB에서 아이템 검색
- * - !알람등록 <이름>: 신규 아이템 알람 등록
- * - !알람해제 <이름>: 알람 해제
- * - !알람목록: 등록된 알람 리스트
+ * - !알람등록 <이름>: 신규 아이템 알람 등록 (유저별)
+ * - !알람해제 <이름>: 본인의 해당 키워드 알람 해제
+ * - !알람해제 <번호>: 해당 번호 유저의 알람 전체 해제
+ * - !알람목록: 유저별 그룹핑된 알람 리스트
  */
 
 /* ==================== 전역 상수/변수 ==================== */
@@ -104,6 +105,10 @@ function formatSatongEntries(entries) {
     let msg = "📢 사통팔달 새 글 (" + entries.length + "건)\n";
     msg += "━━━━━━━━━━━━━━━\n";
 
+    if (entries.length > 3) {
+        msg += "\u200b".repeat(500) + "\n";
+    }
+
     for (let i = 0; i < entries.length; i++) {
         let e = entries[i];
         msg += "[" + e.nick + "] " + e.content + " (" + e.time + ")\n";
@@ -171,9 +176,9 @@ function handleYukSearch(cmd) {
 
             let msg = "🏪 육의전 검색: " + keyword + " (" + data.count + "건)\n";
             msg += "━━━━━━━━━━━━━━━\n";
+            msg += "\u200b".repeat(500) + "\n";
 
-            let limit = Math.min(data.count, 10);
-            for (let i = 0; i < limit; i++) {
+            for (let i = 0; i < data.items.length; i++) {
                 let item = data.items[i];
                 if (item.category === "unit") {
                     msg += item.item_name + " | Lv." + item.quantity;
@@ -182,10 +187,6 @@ function handleYukSearch(cmd) {
                 }
                 msg += " | " + formatPrice(item.price) + "원";
                 msg += " | " + item.seller + "\n";
-            }
-
-            if (data.count > 10) {
-                msg += "... 외 " + (data.count - 10) + "건";
             }
 
             cmd.reply(msg.trim());
@@ -197,7 +198,7 @@ function handleYukSearch(cmd) {
 }
 
 /**
- * !알람등록 <이름> - 알람 등록
+ * !알람등록 <이름> - 알람 등록 (유저별)
  */
 function handleAlarmRegister(cmd) {
     if (cmd.args.length === 0) {
@@ -207,11 +208,13 @@ function handleAlarmRegister(cmd) {
 
     let keyword = cmd.args.join(" ");
     let channelId = String(cmd.channelId);
+    let userHash = cmd.author.hash ? cmd.author.hash.substring(0, 12) : "";
+    let userName = cmd.author.name || "";
 
     new Thread(function () {
         try {
             let data = sendToServer("/gersang/yukeuijeon/alarm",
-                { channel_id: channelId, keyword: keyword }, "POST");
+                { channel_id: channelId, keyword: keyword, user_hash: userHash, user_name: userName }, "POST");
 
             if (!data) {
                 cmd.reply("서버 연결에 실패했습니다.");
@@ -227,28 +230,62 @@ function handleAlarmRegister(cmd) {
 }
 
 /**
- * !알람해제 <이름> - 알람 해제
+ * !알람해제 <이름|번호> - 알람 해제
+ * - 키워드: 본인의 해당 키워드만 해제
+ * - 번호: 해당 번호 유저의 알람 전체 해제
  */
 function handleAlarmUnregister(cmd) {
     if (cmd.args.length === 0) {
-        cmd.reply("사용법: !알람해제 <아이템이름>");
+        cmd.reply("사용법: !알람해제 <아이템이름 또는 번호>");
         return;
     }
 
-    let keyword = cmd.args.join(" ");
+    let arg = cmd.args.join(" ");
     let channelId = String(cmd.channelId);
+    let userHash = cmd.author.hash ? cmd.author.hash.substring(0, 12) : "";
 
     new Thread(function () {
         try {
-            let data = sendToServer("/gersang/yukeuijeon/alarm",
-                { channel_id: channelId, keyword: keyword }, "DELETE");
+            // 숫자인 경우: 번호로 유저 알람 전체 해제
+            if (/^\d+$/.test(arg)) {
+                let index = parseInt(arg, 10);
 
-            if (!data) {
-                cmd.reply("서버 연결에 실패했습니다.");
-                return;
+                // 먼저 알람 목록 조회하여 N번째 유저의 hash 확인
+                let listData = getFromServer("/gersang/yukeuijeon/alarms?channel_id=" + encodeURIComponent(channelId));
+                if (!listData || listData.count === 0) {
+                    cmd.reply("등록된 알람이 없습니다.");
+                    return;
+                }
+
+                if (index < 1 || index > listData.alarms.length) {
+                    cmd.reply("유효한 번호를 입력해주세요. (1~" + listData.alarms.length + ")");
+                    return;
+                }
+
+                let target = listData.alarms[index - 1];
+                let data = sendToServer(
+                    "/gersang/yukeuijeon/alarm/user?channel_id=" + encodeURIComponent(channelId)
+                    + "&user_hash=" + encodeURIComponent(target.user_hash),
+                    {}, "DELETE");
+
+                if (!data) {
+                    cmd.reply("서버 연결에 실패했습니다.");
+                    return;
+                }
+
+                cmd.reply(target.user_name + "님의 " + data.message);
+            } else {
+                // 키워드인 경우: 본인의 해당 키워드만 해제
+                let data = sendToServer("/gersang/yukeuijeon/alarm",
+                    { channel_id: channelId, keyword: arg, user_hash: userHash }, "DELETE");
+
+                if (!data) {
+                    cmd.reply("서버 연결에 실패했습니다.");
+                    return;
+                }
+
+                cmd.reply(data.message);
             }
-
-            cmd.reply(data.message);
         } catch (e) {
             Log.e("[거상봇] handleAlarmUnregister 오류: " + e);
             cmd.reply("알람 해제 중 오류가 발생했습니다.");
@@ -257,7 +294,7 @@ function handleAlarmUnregister(cmd) {
 }
 
 /**
- * !알람목록 - 등록된 알람 리스트
+ * !알람목록 - 유저별 그룹핑된 알람 리스트
  */
 function handleAlarmList(cmd) {
     let channelId = String(cmd.channelId);
@@ -276,12 +313,19 @@ function handleAlarmList(cmd) {
                 return;
             }
 
-            let msg = "🔔 육의전 알람 목록 (" + data.count + "건)\n";
+            // 총 키워드 수 계산
+            let totalKeywords = 0;
+            for (let i = 0; i < data.alarms.length; i++) {
+                totalKeywords += data.alarms[i].keywords.length;
+            }
+
+            let msg = "🔔 육의전 알람 목록 (" + totalKeywords + "건)\n";
             msg += "━━━━━━━━━━━━━━━\n";
 
             for (let i = 0; i < data.alarms.length; i++) {
                 let alarm = data.alarms[i];
-                msg += (i + 1) + ". " + alarm.keyword + "\n";
+                let name = alarm.user_name || "(알 수 없음)";
+                msg += (i + 1) + ". " + name + ": " + alarm.keywords.join(", ") + "\n";
             }
 
             cmd.reply(msg.trim());

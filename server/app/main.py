@@ -27,7 +27,7 @@ from app.services.yukeuijeon_service import (
     run_yukeuijeon_cycle, run_initial_scrape as yuk_initial_scrape,
     search_items as yuk_search_items,
     register_alarm as yuk_register_alarm, register_alarms as yuk_register_alarms,
-    unregister_alarm as yuk_unregister_alarm,
+    unregister_alarm as yuk_unregister_alarm, unregister_user_alarms as yuk_unregister_user_alarms,
     list_alarms as yuk_list_alarms, get_pending_notifications as yuk_get_notifications,
     SCRAPE_INTERVAL as YUK_SCRAPE_INTERVAL,
 )
@@ -444,7 +444,7 @@ def yukeuijeon_alarm_register(request: YukeuijeonAlarmRequest):
         if not keywords:
             return JSONResponse(content={"success": False, "message": "키워드를 입력해주세요."})
 
-        result = yuk_register_alarms(request.channel_id, keywords)
+        result = yuk_register_alarms(request.channel_id, keywords, request.user_hash, request.user_name)
         parts = []
         if result["registered"]:
             parts.append(f"등록: {', '.join(result['registered'])}")
@@ -459,7 +459,7 @@ def yukeuijeon_alarm_register(request: YukeuijeonAlarmRequest):
 
 @app.delete("/gersang/yukeuijeon/alarm")
 def yukeuijeon_alarm_unregister(request: YukeuijeonAlarmRequest):
-    """육의전 알람 해제. 쉼표로 구분된 복수 키워드 지원."""
+    """육의전 알람 해제. 쉼표로 구분된 복수 키워드 지원. user_hash로 본인 것만 삭제."""
     try:
         keywords = [kw.strip() for kw in request.keyword.split(",") if kw.strip()]
         if not keywords:
@@ -468,7 +468,7 @@ def yukeuijeon_alarm_unregister(request: YukeuijeonAlarmRequest):
         removed = []
         not_found = []
         for kw in keywords:
-            if yuk_unregister_alarm(request.channel_id, kw):
+            if yuk_unregister_alarm(request.channel_id, kw, request.user_hash):
                 removed.append(kw)
             else:
                 not_found.append(kw)
@@ -485,9 +485,23 @@ def yukeuijeon_alarm_unregister(request: YukeuijeonAlarmRequest):
         return JSONResponse(content={"success": False, "message": str(e)})
 
 
+@app.delete("/gersang/yukeuijeon/alarm/user")
+def yukeuijeon_alarm_unregister_user(channel_id: str = Query(...), user_hash: str = Query(...)):
+    """특정 유저의 알람 전부 삭제."""
+    try:
+        count = yuk_unregister_user_alarms(channel_id, user_hash)
+        if count > 0:
+            return JSONResponse(content={"success": True, "message": f"{count}건 알람 해제 완료"})
+        else:
+            return JSONResponse(content={"success": False, "message": "해당 유저의 알람이 없습니다."})
+    except Exception as e:
+        print(f"[main.py] yukeuijeon/alarm/user unregister Error: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)})
+
+
 @app.get("/gersang/yukeuijeon/alarms")
 def yukeuijeon_alarm_list(channel_id: str = Query(..., min_length=1)):
-    """육의전 알람 목록 조회."""
+    """육의전 알람 목록 조회. 유저별 그룹핑."""
     try:
         alarms = yuk_list_alarms(channel_id)
         return JSONResponse(content={"count": len(alarms), "alarms": alarms})

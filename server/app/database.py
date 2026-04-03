@@ -31,6 +31,47 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # 테이블 없거나 이미 존재
 
+    # --- 마이그레이션: yukeuijeon_alarms에 user_hash, user_name 컬럼 추가 ---
+    # UNIQUE 제약도 (channel_id, keyword) → (channel_id, user_hash, keyword)로 변경
+    try:
+        conn.execute("ALTER TABLE yukeuijeon_alarms ADD COLUMN user_hash TEXT DEFAULT ''")
+        conn.execute("ALTER TABLE yukeuijeon_alarms ADD COLUMN user_name TEXT DEFAULT ''")
+        conn.commit()
+        print("[database] yukeuijeon_alarms user_hash/user_name 컬럼 마이그레이션 완료")
+    except sqlite3.OperationalError:
+        pass  # 테이블 없거나 이미 존재
+
+    # UNIQUE 제약 변경: 테이블 재생성 필요 (SQLite는 ALTER CONSTRAINT 미지원)
+    try:
+        cursor = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='yukeuijeon_alarms'"
+        )
+        row = cursor.fetchone()
+        if row and "user_hash" in row[0] and "UNIQUE(channel_id, keyword)" in row[0]:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS yukeuijeon_alarms_new (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id      TEXT NOT NULL,
+                    user_hash       TEXT DEFAULT '',
+                    user_name       TEXT DEFAULT '',
+                    keyword         TEXT NOT NULL,
+                    keyword_raw     TEXT NOT NULL,
+                    created_at      TEXT DEFAULT (datetime('now','localtime')),
+                    UNIQUE(channel_id, user_hash, keyword)
+                );
+                INSERT OR IGNORE INTO yukeuijeon_alarms_new
+                    (id, channel_id, user_hash, user_name, keyword, keyword_raw, created_at)
+                    SELECT id, channel_id, COALESCE(user_hash,''), COALESCE(user_name,''),
+                           keyword, keyword_raw, created_at
+                    FROM yukeuijeon_alarms;
+                DROP TABLE yukeuijeon_alarms;
+                ALTER TABLE yukeuijeon_alarms_new RENAME TO yukeuijeon_alarms;
+            """)
+            conn.commit()
+            print("[database] yukeuijeon_alarms UNIQUE 제약 마이그레이션 완료")
+    except sqlite3.OperationalError:
+        pass
+
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS chat_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,10 +117,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS yukeuijeon_alarms (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             channel_id      TEXT NOT NULL,
+            user_hash       TEXT DEFAULT '',
+            user_name       TEXT DEFAULT '',
             keyword         TEXT NOT NULL,
             keyword_raw     TEXT NOT NULL,
             created_at      TEXT DEFAULT (datetime('now','localtime')),
-            UNIQUE(channel_id, keyword)
+            UNIQUE(channel_id, user_hash, keyword)
         );
     """)
     conn.commit()

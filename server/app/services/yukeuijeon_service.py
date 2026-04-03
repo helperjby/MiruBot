@@ -242,20 +242,20 @@ def search_items(keyword: str) -> list[dict]:
 
 # ──────────────────────── 알람 관리 ────────────────────────
 
-def register_alarm(channel_id: str, keyword: str) -> bool:
+def register_alarm(channel_id: str, keyword: str, user_hash: str = "", user_name: str = "") -> bool:
     """알람 등록. 이미 존재하면 False."""
     conn = get_connection()
     keyword_clean = _remove_spaces(keyword)
     cursor = conn.execute(
         """INSERT OR IGNORE INTO yukeuijeon_alarms
-           (channel_id, keyword, keyword_raw) VALUES (?, ?, ?)""",
-        (channel_id, keyword_clean, keyword),
+           (channel_id, user_hash, user_name, keyword, keyword_raw) VALUES (?, ?, ?, ?, ?)""",
+        (channel_id, user_hash, user_name, keyword_clean, keyword),
     )
     conn.commit()
     return cursor.rowcount > 0
 
 
-def register_alarms(channel_id: str, keywords: list[str]) -> dict:
+def register_alarms(channel_id: str, keywords: list[str], user_hash: str = "", user_name: str = "") -> dict:
     """여러 알람 일괄 등록. 각 키워드별 등록 결과 반환."""
     registered = []
     duplicated = []
@@ -263,33 +263,54 @@ def register_alarms(channel_id: str, keywords: list[str]) -> dict:
         kw = kw.strip()
         if not kw:
             continue
-        if register_alarm(channel_id, kw):
+        if register_alarm(channel_id, kw, user_hash, user_name):
             registered.append(kw)
         else:
             duplicated.append(kw)
     return {"registered": registered, "duplicated": duplicated}
 
 
-def unregister_alarm(channel_id: str, keyword: str) -> bool:
-    """알람 해제. 삭제 성공 시 True."""
+def unregister_alarm(channel_id: str, keyword: str, user_hash: str = "") -> bool:
+    """본인의 알람 해제. 삭제 성공 시 True."""
     conn = get_connection()
     keyword_clean = _remove_spaces(keyword)
     cursor = conn.execute(
-        "DELETE FROM yukeuijeon_alarms WHERE channel_id = ? AND keyword = ?",
-        (channel_id, keyword_clean),
+        "DELETE FROM yukeuijeon_alarms WHERE channel_id = ? AND user_hash = ? AND keyword = ?",
+        (channel_id, user_hash, keyword_clean),
     )
     conn.commit()
     return cursor.rowcount > 0
 
 
+def unregister_user_alarms(channel_id: str, user_hash: str) -> int:
+    """특정 유저의 알람 전부 삭제. 삭제된 건수 반환."""
+    conn = get_connection()
+    cursor = conn.execute(
+        "DELETE FROM yukeuijeon_alarms WHERE channel_id = ? AND user_hash = ?",
+        (channel_id, user_hash),
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 def list_alarms(channel_id: str) -> list[dict]:
-    """채팅방의 알람 목록 조회."""
+    """채팅방의 알람 목록을 유저별로 그룹핑하여 조회."""
     conn = get_connection()
     rows = conn.execute(
-        "SELECT keyword_raw, created_at FROM yukeuijeon_alarms WHERE channel_id = ?",
+        "SELECT user_hash, user_name, keyword_raw FROM yukeuijeon_alarms WHERE channel_id = ? ORDER BY user_hash, created_at",
         (channel_id,),
     ).fetchall()
-    return [{"keyword": row["keyword_raw"], "created_at": row["created_at"]} for row in rows]
+
+    user_map = {}
+    user_order = []
+    for row in rows:
+        h = row["user_hash"]
+        if h not in user_map:
+            user_map[h] = {"user_hash": h, "user_name": row["user_name"], "keywords": []}
+            user_order.append(h)
+        user_map[h]["keywords"].append(row["keyword_raw"])
+
+    return [user_map[h] for h in user_order]
 
 
 def check_alarms(new_items: list[dict]) -> list[dict]:
