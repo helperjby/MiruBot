@@ -1,10 +1,11 @@
 /**
- * 거상봇 v2.1
+ * 거상봇 v2.2
  * - 환경: MessengerBot R (API2) - v0.7.41-alpha 이상
  *
  * 기능
  * 1. 사통팔달: 채팅 감지 시 서버에서 신규 데이터 가져와 전송 (자동)
  * 2. 육의전: 아이템 검색 및 알람 명령어
+ * 3. 메모: 유저별 메모 저장/조회/삭제 (로컬 JSON)
  *
  * 명령어
  * - !육의전 <이름>: DB에서 아이템 검색
@@ -12,6 +13,9 @@
  * - !알람해제 <이름>: 본인의 해당 키워드 알람 해제
  * - !알람해제 <번호>: 해당 번호 유저의 알람 전체 해제
  * - !알람목록: 유저별 그룹핑된 알람 리스트
+ * - !메모 <내용>: 메모 저장 후 목록 표시
+ * - !메모: 본인 메모 목록 조회
+ * - !메모삭제 <번호>: 해당 번호 메모 삭제
  */
 
 /* ==================== 전역 상수/변수 ==================== */
@@ -19,6 +23,7 @@
 const bot = BotManager.getCurrentBot();
 const Jsoup = org.jsoup.Jsoup;
 const Thread = java.lang.Thread;
+const File = java.io.File;
 
 // --- 설정 ---
 const FASTAPI_BASE_URL = "http://192.168.0.133:8080";
@@ -396,6 +401,146 @@ function checkAndSendYukNotifications(msg) {
     }).start();
 }
 
+/* ==================== 메모 (로컬 JSON) ==================== */
+
+const MEMO_FILE = "sdcard/msgbot/Bots/거상봇/memo.json";
+
+function loadMemos() {
+    try {
+        let file = new File(MEMO_FILE);
+        if (!file.exists()) return {};
+        let reader = new java.io.BufferedReader(new java.io.FileReader(file));
+        let sb = new java.lang.StringBuilder();
+        let line;
+        while ((line = reader.readLine()) !== null) {
+            sb.append(line);
+        }
+        reader.close();
+        return JSON.parse(String(sb.toString()));
+    } catch (e) {
+        Log.e("[거상봇] loadMemos 오류: " + e);
+        return {};
+    }
+}
+
+function saveMemos(data) {
+    try {
+        let file = new File(MEMO_FILE);
+        let fos = new java.io.FileOutputStream(file);
+        try {
+            let bytes = new java.lang.String(JSON.stringify(data)).getBytes("UTF-8");
+            fos.write(bytes);
+        } finally {
+            fos.close();
+        }
+    } catch (e) {
+        Log.e("[거상봇] saveMemos 오류: " + e);
+    }
+}
+
+/**
+ * KST 날짜를 "YYMMDD HH:MM:SS" 형식으로 포맷
+ */
+function formatMemoDate(dateStr) {
+    // dateStr: "2026-04-03 13:45:17" 또는 ISO 형식
+    let d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    let yy = String(d.getFullYear()).substring(2);
+    let MM = String(d.getMonth() + 1).padStart(2, "0");
+    let dd = String(d.getDate()).padStart(2, "0");
+    let hh = String(d.getHours()).padStart(2, "0");
+    let mm = String(d.getMinutes()).padStart(2, "0");
+    let ss = String(d.getSeconds()).padStart(2, "0");
+    return yy + MM + dd + " " + hh + ":" + mm + ":" + ss;
+}
+
+/**
+ * 메모 목록 포맷팅
+ */
+function formatMemoList(memos, userName) {
+    if (!memos || memos.length === 0) {
+        return "등록된 메모가 없습니다.";
+    }
+
+    let msg = "📝 " + userName + "님의 메모입니다.\n";
+    msg += "\u200b".repeat(500) + "\n";
+
+    for (let i = 0; i < memos.length; i++) {
+        let m = memos[i];
+        msg += (i + 1) + ". " + m.content + "\n";
+        msg += formatMemoDate(m.created_at) + "\n";
+    }
+
+    return msg.trim();
+}
+
+/**
+ * !메모 [내용] - 메모 저장 또는 조회
+ */
+function handleMemo(cmd) {
+    let userHash = cmd.author.hash ? cmd.author.hash.substring(0, 12) : "";
+    let userName = cmd.author.name || "";
+    let channelId = String(cmd.channelId);
+    let key = channelId + "_" + userHash;
+
+    let allMemos = loadMemos();
+    if (!allMemos[key]) allMemos[key] = [];
+
+    if (cmd.args.length > 0) {
+        let content = cmd.args.join(" ");
+        let now = new Date();
+        let kstStr = now.getFullYear() + "-"
+            + String(now.getMonth() + 1).padStart(2, "0") + "-"
+            + String(now.getDate()).padStart(2, "0") + " "
+            + String(now.getHours()).padStart(2, "0") + ":"
+            + String(now.getMinutes()).padStart(2, "0") + ":"
+            + String(now.getSeconds()).padStart(2, "0");
+
+        allMemos[key].push({ content: content, created_at: kstStr });
+        saveMemos(allMemos);
+        cmd.reply("메모가 저장되었습니다. (" + allMemos[key].length + "건)");
+        return;
+    }
+
+    cmd.reply(formatMemoList(allMemos[key], userName));
+}
+
+/**
+ * !메모삭제 <번호> - 메모 삭제
+ */
+function handleMemoDelete(cmd) {
+    if (cmd.args.length === 0 || !/^\d+$/.test(cmd.args[0])) {
+        cmd.reply("사용법: !메모삭제 <번호>");
+        return;
+    }
+
+    let index = parseInt(cmd.args[0], 10);
+    let userHash = cmd.author.hash ? cmd.author.hash.substring(0, 12) : "";
+    let userName = cmd.author.name || "";
+    let channelId = String(cmd.channelId);
+    let key = channelId + "_" + userHash;
+
+    let allMemos = loadMemos();
+    if (!allMemos[key] || allMemos[key].length === 0) {
+        cmd.reply("등록된 메모가 없습니다.");
+        return;
+    }
+
+    if (index < 1 || index > allMemos[key].length) {
+        cmd.reply("유효한 번호를 입력해주세요. (1~" + allMemos[key].length + ")");
+        return;
+    }
+
+    allMemos[key].splice(index - 1, 1);
+    saveMemos(allMemos);
+
+    if (allMemos[key].length === 0) {
+        cmd.reply("메모가 모두 삭제되었습니다.");
+    } else {
+        cmd.reply(formatMemoList(allMemos[key], userName));
+    }
+}
+
 /* ==================== 이벤트 리스너 ==================== */
 
 bot.setCommandPrefix("!");
@@ -414,6 +559,12 @@ bot.addListener(Event.COMMAND, function (cmd) {
         case "알람목록":
             handleAlarmList(cmd);
             break;
+        case "메모":
+            handleMemo(cmd);
+            break;
+        case "메모삭제":
+            handleMemoDelete(cmd);
+            break;
     }
 });
 
@@ -422,4 +573,4 @@ bot.addListener(Event.MESSAGE, function (msg) {
     checkAndSendYukNotifications(msg);
 });
 
-Log.i("--- 거상봇 v2.0 로드됨 ---");
+Log.i("--- 거상봇 v2.2 로드됨 ---");
