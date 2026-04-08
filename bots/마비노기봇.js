@@ -1,5 +1,17 @@
 /*
-* 마비노기봇 (Mabinogi Bot) - v2.7.4 (코드 최적화)
+ * 마비노기봇 (Mabinogi Bot) - v2.8.1 (Thread-safety 수정)
+ * - lastDeepHoleTimeMap을 ConcurrentHashMap으로 교체 (GraalVM shape 크래시 수정)
+ * - delete 연산 제거, Iterator.remove() 사용
+ *
+ * v2.8.0 (알림 토글 + 랭킹 제거)
+ * - !랭킹 기능 및 관련 코드 전체 제거
+ * - !어구알람 / !심구알람 / !공지알람 ON/OFF 토글 명령어 추가 (관리자 전용)
+ * - !알람리스트 / !알람목록 명령어 추가
+ * - 공지 알림 키워드 필터 적용 (점검/업데이트만)
+ * - config 구조 변경: isAlertOn → alerts 객체
+ * - 관리자 해시 기반 권한 체크 추가
+ *
+ * v2.7.4 (코드 최적화)
  * - for...in → for 루프 교체 (배열 순회 안전성)
  * - readConfig() 캐싱 적용 (1분 TTL)
  * - lastDeepHoleTimeMap 만료 키 정리 로직 추가
@@ -20,8 +32,10 @@ const RUNE_INFO_JSON_PATH = "sdcard/msgbot/Bots/마비노기봇/runeinfo.json";
 const RUNEWORD_JSON_PATH = "sdcard/msgbot/Bots/마비노기봇/runeword.json";
 const ID_MALTESE = 18448842407409693n; 
 
-const ALLOWED_ROOM_NAMES = ["지통실", "말티즈", "천호", "관리자"];
+const ALLOWED_ROOM_NAMES = ["지통실", "말티즈"];
 const TARGET_APP_PACKAGES = ["life.mabimobi.app", "com.android.chrome"];
+
+const ADMIN_HASHES = ["e5a0e976d576", "cef61879db01"];
 
 const ALERT_ROOM_MAP = {
     "칼릭스": ["말티즈"], 
@@ -33,12 +47,11 @@ const ALERT_ROOM_MAP = {
     "알리사": []
 };
 
-const KEYWORD_NOTICE_NEW = "공지";
-
 // --- [상태 저장용 전역 변수 (도배 방지)] ---
 let lastAbyssScheduledTime = 0;
 let lastAbyssNowSent = 0;
-let lastDeepHoleTimeMap = {};        // 심층 구멍 쿨타임 관리 객체
+const ConcurrentHashMap = Java.type("java.util.concurrent.ConcurrentHashMap");
+let lastDeepHoleTimeMap = new ConcurrentHashMap();  // 심층 구멍 쿨타임 관리 (thread-safe)
 
 // --- [config 캐싱] ---
 let cachedConfig = null;
@@ -46,6 +59,14 @@ let cachedConfigTime = 0;
 const CONFIG_CACHE_TTL = 60000; // 1분
 
 // --- [헬퍼 함수: 내부 변수는 무조건 let 사용] ---
+
+function truncHash(h) {
+    return h ? h.substring(0, 12) : null;
+}
+
+function isAdmin(hash) {
+    return !!hash && ADMIN_HASHES.includes(truncHash(hash));
+}
 
 let formatNumber = function(num) {
     return String(num || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -68,8 +89,9 @@ function readConfig() {
         return cachedConfig;
     }
 
+    let defaultAlerts = { abyss: true, deepHole: true, notice: true };
+    let defaultConfig = { lastAutoMalteseDate: "", alerts: defaultAlerts };
     let data = FileStream.read(DB_PATH);
-    let defaultConfig = { isRankingOn: true, isAlertOn: true, lastAutoMalteseDate: "" };
     if (!data) {
         FileStream.write(DB_PATH, JSON.stringify(defaultConfig));
         cachedConfig = defaultConfig;
@@ -80,6 +102,13 @@ function readConfig() {
         cachedConfig = JSON.parse(data);
     } catch (e) {
         cachedConfig = defaultConfig;
+    }
+    // alerts 누락 키 머지
+    if (!cachedConfig.alerts) cachedConfig.alerts = {};
+    for (let k in defaultAlerts) {
+        if (cachedConfig.alerts[k] === undefined) {
+            cachedConfig.alerts[k] = defaultAlerts[k];
+        }
     }
     cachedConfigTime = now;
     return cachedConfig;
@@ -180,89 +209,6 @@ function sendMalteseSearch(channelId, query) {
         } catch (e) {
             Log.e("[마비노기봇] 랭킹 검색 실패: " + e);
             bot.send(channelId, "❌ 검색 중 오류가 발생했습니다.");
-        }
-    }).start();
-}
-
-function fetchGlobalSearch(cmd, nickname) {
-    new java.lang.Thread(function() {
-        try {
-            let url = FASTAPI_BASE_URL + "/api/search/user/" + encodeURIComponent(nickname);
-            let res = Jsoup.connect(url).timeout(10000).ignoreContentType(true).execute();
-            let data = JSON.parse(res.body());
-
-            if (!data || data.length === 0 || typeof data === 'string') {
-                cmd.reply("🔍 '" + nickname + "'에 대한 검색 결과가 없습니다.");
-                return;
-            }
-
-            let viewMore = "\u200b".repeat(500);
-            let msg = "🔍 " + data.length + "명의 " + nickname + "을(를) 찾았습니다.\n" + viewMore + "\n";
-            
-            data.forEach(function(user) {
-                msg += user.server_name + " " + user.user_id + "\n";
-            });
-
-            cmd.reply(msg.trim());
-        } catch (e) {
-            Log.e("[마비노기봇] 랭킹 상세 검색 오류: " + e);
-            cmd.reply("❌ API 호출 중 오류가 발생했습니다.");
-        }
-    }).start();
-}
-
-function fetchUserDetail(cmd, server, nickname) {
-    new java.lang.Thread(function() {
-        try {
-            let url = FASTAPI_BASE_URL + "/api2/detail/" + encodeURIComponent(server) + "/" + encodeURIComponent(nickname);
-            let res = Jsoup.connect(url).timeout(10000).ignoreContentType(true).execute();
-            let data = JSON.parse(res.body());
-
-            if (!data || !data.rankList || data.rankList.length === 0) {
-                cmd.reply("❌ [" + server + "] 서버에서 '" + nickname + "' 정보를 찾을 수 없습니다.");
-                return;
-            }
-
-            let mainClass = data.rankList.find(function(item) { return item.enable_class === "1"; }) || data.rankList[0];
-            let isMain = mainClass.enable_class === "1" ? " (메인)" : "";
-            let lastAccess = mainClass.update_at ? mainClass.update_at.replace("T", " ").substring(0, 16) : "정보 없음";
-
-            let history = (data.history || []).filter(function(h) { return h.class_type === mainClass.class_type; });
-            let recent8 = history.slice(-8);
-            let growthLog = [];
-
-            for (let i = recent8.length - 1; i > 0; i--) {
-                let curr = recent8[i];
-                let prev = recent8[i-1];
-                let diff = curr.level - prev.level;
-                let diffStr = diff > 0 ? "(+" + formatNumber(diff) + ")" : "(" + formatNumber(diff) + ")";
-                let d = curr.date_time;
-                let dateStr = "20" + d.substring(0,2) + "-" + d.substring(2,4) + "-" + d.substring(4,6);
-                growthLog.push("[" + dateStr + "] 전투력: " + formatNumber(curr.level) + " " + diffStr);
-            }
-
-            let viewMore = "\u200b".repeat(500);
-            let result = "✨ " + nickname + " 검색 결과입니다. ✨\n" + viewMore +
-                        "--------------------------------------\n" +
-                         "닉네임 : " + mainClass.user_id + "\n" +
-                         "서버 : " + mainClass.server_name + "\n" +
-                         "직업 : " + mainClass.class_name + isMain + "\n" +
-                         "서버 랭킹 : " + (mainClass.server_rank || mainClass.rank || "-") + "\n" +
-                         "직업 랭킹 : " + (mainClass.class_rank || "-") + "\n\n" +
-                         "종합 평가: " + formatNumber(mainClass.evaluation_score) + "\n" +
-                         "전투력: " + formatNumber(mainClass.level) + "\n" +
-                         "생활력: " + formatNumber(mainClass.attractiveness) + "\n" + 
-                         "매력: " + formatNumber(mainClass.vitality) + "\n\n" +      
-                         "마지막 접속: " + lastAccess + "\n\n" +
-                         "최근 성장 추이 (최신순 7일)\n" +
-                         "--------------------------------------\n" +
-                         (growthLog.length > 0 ? growthLog.slice(0, 7).join("\n") : "기록이 없습니다.") +
-                         "\n------------------------------------";
-
-            cmd.reply(result);
-        } catch (e) {
-            Log.e("[마비노기봇] 상세 정보 조회 오류: " + e);
-            cmd.reply("❌ 정보를 가져오는 중 오류가 발생했습니다.");
         }
     }).start();
 }
@@ -372,20 +318,19 @@ function onCommand(cmd) {
 
     switch (cmd.command) {
         case "명령어":
-            let helpMsg = "🐶미루봇 v2.7 기능 안내\n" +
+            let helpMsg = "🐶미루봇 v2.8 기능 안내\n" +
                         "\u200b".repeat(500) +
                         "\n----------------------------\n" +
                         "[길원 얼굴 익히기]\n" +
                         "• !말티즈 : 랜덤 이미지 1장 전송\n" +
                         "• !말티즈 [숫자] : 1~8장 랜덤 전송\n" +
                         "• !말티즈 [닉네임] : 유저의 스텔라그램 조회\n\n" +
-                        "• 스텔라그램 업데이트 방법:\n" + 
-                        " 1) 아래 링크의 폴더에 최신 이미지를 업로드합니다.\n" + 
-                        " 2) 파일명을 반드시 닉네임으로 저장합니다.\n" + 
+                        "• 스텔라그램 업데이트 방법:\n" +
+                        " 1) 아래 링크의 폴더에 최신 이미지를 업로드합니다.\n" +
+                        " 2) 파일명을 반드시 닉네임으로 저장합니다.\n" +
                         " 3) https://1drv.ms/f/c/773af9826b9658fb/IgAWUCrXEKZeRqJKSGEksOTRAXK_1oYowPNMIrejuL2TA1s \n\n" +
-                        
+
                         "📊 [정보 조회]\n" +
-                        "• !랭킹 [서버] [닉네임] : 캐릭터 랭킹 조회\n" +
                         "• !룬워드 : 전체 룬워드 도감 조회\n" +
                         "• !룬워드 [공격력/체력/기타] : 종류별 룬워드 조회\n" +
                         "• !룬정보 [이름] : 룬 등급 및 효과 조회\n" +
@@ -394,24 +339,20 @@ function onCommand(cmd) {
 
                         "🎮 [엔터테인먼트]\n" +
                         "• !운세, !열쇠운세 : 오늘의 운세와 추천 장소를 점쳐봅니다.\n\n" +
-                        
-                        "✨ [상시 기능]\n" + 
+
+                        "⚙️ [알림 설정]\n" +
+                        "• !알람리스트 : 알림 ON/OFF 상태 확인\n" +
+                        "• !어구알람 : 어비스 구멍 알람 ON/OFF (관리자)\n" +
+                        "• !심구알람 : 심층 구멍 알람 ON/OFF (관리자)\n" +
+                        "• !공지알람 : 공지사항 알람 ON/OFF (관리자)\n\n" +
+
+                        "✨ [상시 기능]\n" +
                         "• URL 요약: 뉴스, 게임 정보 등 WEB 및 YOUTUBE 링크를 자동으로 요약합니다.\n" +
                         "• 말텔라그램: 매일 오전 9시 랜덤한 두명의 스텔라그램을 보여줍니다.\n" +
                         "• 심구 및 어구 알림: 심층 구멍과 어비스 구멍이 등장하면 톡방에 알림을 보냅니다.";
 
             cmd.reply(helpMsg);
             break;
-        case "랭킹":
-            if (cmd.args.length === 1) {
-                fetchGlobalSearch(cmd, cmd.args[0]);
-            } else if (cmd.args.length >= 2) {
-                fetchUserDetail(cmd, cmd.args[0], cmd.args[1]);
-            } else {
-                cmd.reply("💡 사용법: !랭킹 {닉네임} 또는 !랭킹 {서버} {닉네임}");
-            }
-            break;
-
         case "열쇠운세":
         case "운세": 
             let senderName = (typeof cmd.author === 'object') ? cmd.author.name : cmd.author;
@@ -585,6 +526,44 @@ function onCommand(cmd) {
             if (notFound.length > 0) cmd.reply("❌ 못 찾음: " + notFound.join(", "));
             if (multiple.length > 0) cmd.reply("💬 중복 검색: " + multiple.join("\n"));
             break;
+
+        case "어구알람":
+            if (!isAdmin(cmd.author.hash)) {
+                cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+                break;
+            }
+            config.alerts.abyss = !config.alerts.abyss;
+            writeConfig(config);
+            cmd.reply("🔔 어비스 구멍 알람 " + (config.alerts.abyss ? "ON ✅" : "OFF ❌"));
+            break;
+
+        case "심구알람":
+            if (!isAdmin(cmd.author.hash)) {
+                cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+                break;
+            }
+            config.alerts.deepHole = !config.alerts.deepHole;
+            writeConfig(config);
+            cmd.reply("🔔 심층 구멍 알람 " + (config.alerts.deepHole ? "ON ✅" : "OFF ❌"));
+            break;
+
+        case "공지알람":
+            if (!isAdmin(cmd.author.hash)) {
+                cmd.reply("❌ 관리자만 사용할 수 있는 명령어입니다.");
+                break;
+            }
+            config.alerts.notice = !config.alerts.notice;
+            writeConfig(config);
+            cmd.reply("🔔 공지 알람 " + (config.alerts.notice ? "ON ✅" : "OFF ❌"));
+            break;
+
+        case "알람리스트":
+        case "알람목록":
+            cmd.reply("📋 현재 알람 리스트입니다.\n" +
+                (config.alerts.abyss ? "✅" : "❌") + " 어비스 구멍 알람\n" +
+                (config.alerts.deepHole ? "✅" : "❌") + " 심층 구멍 알람\n" +
+                (config.alerts.notice ? "✅" : "❌") + " 공지 알람");
+            break;
     }
     } catch (e) {
         Log.e("[마비노기봇] onCommand 오류 (!" + cmd.command + "): " + String(e));
@@ -596,7 +575,6 @@ function onNotification(sbn) {
     if (!TARGET_APP_PACKAGES.includes(packageName)) return;
 
     let config = readConfig();
-    if (!config.isAlertOn) return;
 
     try {
         let extras = sbn.notification.extras;
@@ -634,6 +612,7 @@ function onNotification(sbn) {
 
         // [기능 2-A] 어비스 예약 알림
         if (fullContent.includes("어비스 구멍 출현 알림")) {
+            if (!config.alerts.abyss) return;
             if (nowMillis - lastAbyssScheduledTime < 3600000) return;
 
             lastAbyssScheduledTime = nowMillis;
@@ -651,6 +630,7 @@ function onNotification(sbn) {
 
         // [기능 2-B] 어비스 즉시 알림
         if (fullContent.includes("어비스 구멍 출현!")) {
+            if (!config.alerts.abyss) return;
             if (nowMillis - lastAbyssNowSent < 600000) return;
 
             lastAbyssNowSent = nowMillis;
@@ -662,8 +642,9 @@ function onNotification(sbn) {
             return;
         }
 
-        // [기능 3] 심층 구멍 알림 및 쿨타임 처리 [추가]
+        // [기능 3] 심층 구멍 알림 및 쿨타임 처리
         if (fullContent.includes("심층")) {
+            if (!config.alerts.deepHole) return;
             let regex = /(\S+) 서버의 (.+?) 지역.*?(\d+)개/;
             let match = fullContent.match(regex);
 
@@ -674,18 +655,20 @@ function onNotification(sbn) {
                 
                 // [도배 방지] 서버+지역 키를 만들어 3분(180000ms) 쿨타임 적용
                 let deepHoleKey = server + "_" + location;
-                if (lastDeepHoleTimeMap[deepHoleKey] && (nowMillis - lastDeepHoleTimeMap[deepHoleKey] < 180000)) {
-                    return; 
+                let lastTime = lastDeepHoleTimeMap.get(deepHoleKey);
+                if (lastTime !== null && (nowMillis - lastTime < 180000)) {
+                    return;
                 }
-                
-                lastDeepHoleTimeMap[deepHoleKey] = nowMillis;
+
+                lastDeepHoleTimeMap.put(deepHoleKey, nowMillis);
 
                 // 만료된 쿨타임 키 정리 (10개 초과 시)
-                let deepHoleKeys = Object.keys(lastDeepHoleTimeMap);
-                if (deepHoleKeys.length > 10) {
-                    for (let k = 0; k < deepHoleKeys.length; k++) {
-                        if (nowMillis - lastDeepHoleTimeMap[deepHoleKeys[k]] >= 180000) {
-                            delete lastDeepHoleTimeMap[deepHoleKeys[k]];
+                if (lastDeepHoleTimeMap.size() > 10) {
+                    let iter = lastDeepHoleTimeMap.entrySet().iterator();
+                    while (iter.hasNext()) {
+                        let entry = iter.next();
+                        if (nowMillis - entry.getValue() >= 180000) {
+                            iter.remove();
                         }
                     }
                 }
@@ -702,8 +685,9 @@ function onNotification(sbn) {
             return;
         }
 
-        // [기능 4] 새로운 공지사항 알림
-        if (KEYWORD_NOTICE_NEW && fullContent.includes(KEYWORD_NOTICE_NEW)) {
+        // [기능 4] 새로운 공지사항 알림 (점검/업데이트만)
+        if (fullContent.includes("공지") && (fullContent.includes("점검") || fullContent.includes("업데이트"))) {
+            if (!config.alerts.notice) return;
             let viewMore = "\u200b".repeat(500);
             let noticeContent = (bigText.length > text.length) ? bigText : text;
             let msg = "📢 " + title + "\n" + viewMore + "\n" + noticeContent;
@@ -723,4 +707,4 @@ bot.addListener(Event.COMMAND, onCommand);
 bot.addListener(Event.MESSAGE, onMessage);
 bot.addListener(Event.NOTIFICATION_POSTED, onNotification);
 
-Log.i("마비노기봇 v2.7.4 로드 완료.");
+Log.i("마비노기봇 v2.8.1 로드 완료.");
