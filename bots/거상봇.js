@@ -1,11 +1,12 @@
 /**
- * 거상봇 v2.2
+ * 거상봇 v2.3
  * - 환경: MessengerBot R (API2) - v0.7.41-alpha 이상
  *
  * 기능
  * 1. 사통팔달: 채팅 감지 시 서버에서 신규 데이터 가져와 전송 (자동)
  * 2. 육의전: 아이템 검색 및 알람 명령어
  * 3. 메모: 유저별 메모 저장/조회/삭제 (로컬 JSON)
+ * 4. 퀘스트 정보: gersangjjang.com 파싱 결과(JSON 번들)를 로컬에서 조회
  *
  * 명령어
  * - !육의전 <이름>: DB에서 아이템 검색
@@ -16,6 +17,11 @@
  * - !메모 <내용>: 메모 저장 후 목록 표시
  * - !메모: 본인 메모 목록 조회
  * - !메모삭제 <번호>: 해당 번호 메모 삭제
+ * - !퀘스트: 카테고리 목록 및 사용법
+ * - !퀘스트 목록 [카테고리]: 전체 또는 카테고리별 퀘스트 이름 나열
+ * - !퀘스트 주간: 주간-일반 (/quest/week.asp)
+ * - !퀘스트 일일: 일일-우호도 (/quest/date2.asp)
+ * - !퀘스트 <이름>: 해당 퀘스트 상세 (부분 일치 시 후보 표시)
  */
 
 /* ==================== 전역 상수/변수 ==================== */
@@ -541,11 +547,278 @@ function handleMemoDelete(cmd) {
     }
 }
 
+/* ==================== 퀘스트 정보 (로컬 JSON) ==================== */
+
+const QUEST_FILE = "sdcard/msgbot/Bots/거상봇/quests.json";
+
+let _questCache = null;       // 파싱된 데이터 캐시
+let _questLoadFailed = false; // 최초 로드 실패 여부 (재시도 방지)
+
+/**
+ * quests.json 을 최초 1회 로드하여 메모리에 캐시한다.
+ * @returns {object|null}
+ */
+function loadQuestData() {
+    if (_questCache) return _questCache;
+    if (_questLoadFailed) return null;
+
+    try {
+        let file = new File(QUEST_FILE);
+        if (!file.exists()) {
+            Log.e("[거상봇] quests.json 파일 없음: " + QUEST_FILE);
+            _questLoadFailed = true;
+            return null;
+        }
+        let reader = new java.io.BufferedReader(
+            new java.io.InputStreamReader(
+                new java.io.FileInputStream(file), "UTF-8"));
+        let sb = new java.lang.StringBuilder();
+        let line;
+        while ((line = reader.readLine()) !== null) {
+            sb.append(line);
+            sb.append("\n");
+        }
+        reader.close();
+
+        _questCache = JSON.parse(String(sb.toString()));
+        Log.i("[거상봇] quests.json 로드 완료: " + _questCache.total + "건");
+        return _questCache;
+    } catch (e) {
+        Log.e("[거상봇] loadQuestData 오류: " + e);
+        _questLoadFailed = true;
+        return null;
+    }
+}
+
+/**
+ * 숫자 포맷 (12345 → "12,345")
+ */
+function formatInt(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * 보상 객체를 한 줄로 포맷팅
+ */
+function formatRewards(r) {
+    if (!r) return "";
+    let parts = [];
+    if (r.coin) parts.push("동전 " + r.coin);
+    if (r.exp) parts.push("경험치 " + formatInt(r.exp));
+    if (r.credit) parts.push("신용도 " + formatInt(r.credit));
+    if (r.contrib) parts.push("기여도 +" + r.contrib);
+    if (r.items && r.items.length > 0) {
+        parts.push(r.items.join(", "));
+    }
+    return parts.join(" | ");
+}
+
+/**
+ * step-row 포맷 퀘스트 렌더링
+ */
+function renderStepRowQuest(quest) {
+    let msg = "🗺️ " + quest.label + "  [" + quest.category + "]\n";
+    msg += quest.url + "\n";
+    msg += "━━━━━━━━━━━━━━━\n";
+    msg += "\u200b".repeat(500) + "\n";
+
+    let containers = quest.containers || [];
+    for (let i = 0; i < containers.length; i++) {
+        let c = containers[i];
+        if (c.title) {
+            msg += "\n■ " + c.title + "\n";
+        }
+        if (c.top_desc) {
+            msg += c.top_desc + "\n";
+        }
+
+        let groups = c.groups || [];
+        for (let g = 0; g < groups.length; g++) {
+            let group = groups[g];
+            if (group.header) {
+                msg += "\n▸ " + group.header + "\n";
+            }
+            let steps = group.steps || [];
+            for (let s = 0; s < steps.length; s++) {
+                let step = steps[s];
+                let stepLabel = step.step ? "[" + step.step + "] " : "";
+                msg += stepLabel + step.monster.replace(/\n/g, " ") + "\n";
+                let rewardLine = formatRewards(step.rewards);
+                if (rewardLine) {
+                    msg += "  → " + rewardLine + "\n";
+                }
+            }
+        }
+    }
+
+    return msg.trim();
+}
+
+/**
+ * raw 포맷 퀘스트 렌더링
+ */
+function renderRawQuest(quest) {
+    let msg = "🗺️ " + quest.label + "  [" + quest.category + "]\n";
+    msg += quest.url + "\n";
+    msg += "━━━━━━━━━━━━━━━\n";
+    msg += "\u200b".repeat(500) + "\n";
+    msg += quest.raw_text || "(내용 없음)";
+    return msg;
+}
+
+/**
+ * 퀘스트 이름으로 후보 검색 (alias → 완전일치 → 부분일치)
+ * @returns {object} { exact: string|null, candidates: string[] }
+ */
+function lookupQuest(data, input) {
+    let name = String(input).trim();
+    if (!name) return { exact: null, candidates: [] };
+
+    // 1. alias
+    if (data.aliases && data.aliases[name]) {
+        return { exact: data.aliases[name], candidates: [] };
+    }
+    // 2. 완전 일치
+    if (data.quests[name]) {
+        return { exact: name, candidates: [] };
+    }
+    // 3. 부분 일치
+    let keys = Object.keys(data.quests);
+    let matches = [];
+    for (let i = 0; i < keys.length; i++) {
+        if (keys[i].indexOf(name) !== -1) {
+            matches.push(keys[i]);
+        }
+    }
+    if (matches.length === 1) {
+        return { exact: matches[0], candidates: [] };
+    }
+    return { exact: null, candidates: matches };
+}
+
+/**
+ * !퀘스트 (인자 없음) - 카테고리 요약과 사용법 안내
+ */
+function handleQuestRoot(cmd, data) {
+    let catKeys = Object.keys(data.categories);
+    let msg = "🗺️ 거상 퀘스트 정보 (" + data.total + "건)\n";
+    msg += "━━━━━━━━━━━━━━━\n";
+    for (let i = 0; i < catKeys.length; i++) {
+        let k = catKeys[i];
+        msg += "  " + k + ": " + data.categories[k].length + "개\n";
+    }
+    msg += "\n사용법:\n";
+    msg += "  !퀘스트 주간 / 일일\n";
+    msg += "  !퀘스트 목록 [카테고리]\n";
+    msg += "  !퀘스트 <이름>\n";
+    msg += "(출처: " + data.source + ")";
+    cmd.reply(msg);
+}
+
+/**
+ * !퀘스트 목록 [카테고리]
+ */
+function handleQuestList(cmd, data, catArg) {
+    let msg;
+    if (catArg && data.categories[catArg]) {
+        let names = data.categories[catArg];
+        msg = "🗺️ [" + catArg + "] 퀘스트 " + names.length + "개\n";
+        msg += "━━━━━━━━━━━━━━━\n";
+        msg += "\u200b".repeat(500) + "\n";
+        for (let i = 0; i < names.length; i++) {
+            msg += "- " + names[i] + "\n";
+        }
+    } else {
+        msg = "🗺️ 전체 퀘스트 목록 (" + data.total + "건)\n";
+        msg += "━━━━━━━━━━━━━━━\n";
+        msg += "\u200b".repeat(500) + "\n";
+        let catKeys = Object.keys(data.categories);
+        for (let i = 0; i < catKeys.length; i++) {
+            let k = catKeys[i];
+            let names = data.categories[k];
+            msg += "\n■ " + k + " (" + names.length + "개)\n";
+            for (let j = 0; j < names.length; j++) {
+                msg += "- " + names[j] + "\n";
+            }
+        }
+        if (catArg) {
+            msg += "\n(카테고리 '" + catArg + "' 없음 — 전체 출력)";
+        }
+    }
+    cmd.reply(msg.trim());
+}
+
+/**
+ * !퀘스트 <이름> - 상세 출력 or 후보 안내
+ */
+function handleQuestDetail(cmd, data, name) {
+    let r = lookupQuest(data, name);
+    if (!r.exact) {
+        if (r.candidates.length === 0) {
+            cmd.reply("'" + name + "' 에 해당하는 퀘스트를 찾지 못했습니다.\n!퀘스트 목록 으로 이름을 확인해주세요.");
+        } else {
+            let msg = "'" + name + "' 부분 일치 " + r.candidates.length + "건:\n";
+            for (let i = 0; i < r.candidates.length && i < 20; i++) {
+                msg += "- " + r.candidates[i] + "\n";
+            }
+            if (r.candidates.length > 20) {
+                msg += "... 외 " + (r.candidates.length - 20) + "건";
+            }
+            cmd.reply(msg.trim());
+        }
+        return;
+    }
+
+    let quest = data.quests[r.exact];
+    let rendered;
+    if (quest.format === "step-row") {
+        rendered = renderStepRowQuest(quest);
+    } else {
+        rendered = renderRawQuest(quest);
+    }
+    cmd.reply(rendered);
+}
+
+/**
+ * !퀘스트 명령어 메인 디스패처
+ */
+function handleQuestCommand(cmd) {
+    new Thread(function () {
+        try {
+            let data = loadQuestData();
+            if (!data) {
+                cmd.reply("퀘스트 데이터를 불러오지 못했습니다.\n(" + QUEST_FILE + ")");
+                return;
+            }
+
+            if (cmd.args.length === 0) {
+                handleQuestRoot(cmd, data);
+                return;
+            }
+
+            let first = cmd.args[0];
+            if (first === "목록") {
+                let cat = cmd.args.length > 1 ? cmd.args[1] : null;
+                handleQuestList(cmd, data, cat);
+                return;
+            }
+
+            // 그 외: 전체 args 를 공백으로 이어붙여 퀘스트 이름으로 조회
+            let name = cmd.args.join(" ");
+            handleQuestDetail(cmd, data, name);
+        } catch (e) {
+            Log.e("[거상봇] handleQuestCommand 오류: " + e);
+            cmd.reply("퀘스트 조회 중 오류가 발생했습니다.");
+        }
+    }).start();
+}
+
 /* ==================== 이벤트 리스너 ==================== */
 
 bot.setCommandPrefix("!");
 
 bot.addListener(Event.COMMAND, function (cmd) {
+    if (!TARGET_ROOM_IDS.includes(String(cmd.channelId))) return;
     switch (cmd.command) {
         case "육의전":
             handleYukSearch(cmd);
@@ -565,6 +838,9 @@ bot.addListener(Event.COMMAND, function (cmd) {
         case "메모삭제":
             handleMemoDelete(cmd);
             break;
+        case "퀘스트":
+            handleQuestCommand(cmd);
+            break;
     }
 });
 
@@ -573,4 +849,4 @@ bot.addListener(Event.MESSAGE, function (msg) {
     checkAndSendYukNotifications(msg);
 });
 
-Log.i("--- 거상봇 v2.2 로드됨 ---");
+Log.i("--- 거상봇 v2.3 로드됨 ---");
