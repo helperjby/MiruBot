@@ -119,6 +119,47 @@ def parse_number_with_unit(num_str: str, unit: str | None) -> int:
     return int(num)
 
 
+def _parse_korean_number(s: str) -> int:
+    """복합 한국어 숫자 파싱: 2천만, 1억3757만, 17만4000, 645만, 2400 등."""
+    s = s.replace(",", "").replace(" ", "").strip()
+    if not s:
+        return 0
+
+    total = 0
+
+    # 억
+    m = re.match(r"([\d.]+)억(.*)$", s)
+    if m:
+        total += int(float(m.group(1)) * 100_000_000)
+        s = m.group(2)
+
+    # 천만 (2천만 = 2000만) 또는 만
+    m = re.match(r"([\d.]+)(천)?만(.*)$", s)
+    if m:
+        v = float(m.group(1))
+        if m.group(2):  # 천 접미: "2천만" = 2000만
+            v *= 1000
+        total += int(v * 10_000)
+        s = m.group(3)
+
+    # 천
+    m = re.match(r"([\d.]+)천(.*)$", s)
+    if m:
+        total += int(float(m.group(1)) * 1_000)
+        s = m.group(2)
+
+    # 남은 숫자
+    if s and re.match(r"^[\d.]+$", s.strip()):
+        total += int(float(s.strip()))
+
+    if total == 0:
+        try:
+            return int(float(s.strip() if s else "0"))
+        except ValueError:
+            return 0
+    return total
+
+
 # ── 허브 파싱 ─────────────────────────────────────────
 def parse_index(html: str) -> list[tuple[str, str]]:
     """/quest/index.asp 에서 (label, href) 쌍 추출."""
@@ -182,6 +223,8 @@ def _parse_rewards(desc_raw: str) -> dict:
     exp = 0
     credit = 0
     contrib = 0
+    favor = 0
+    favor_name = ""
     items: list[str] = []
 
     for line in desc_raw.split("\n"):
@@ -194,7 +237,7 @@ def _parse_rewards(desc_raw: str) -> dict:
             coin += parse_number_with_unit(m.group(1), None)
             continue
 
-        m = re.match(r"^경험치\s*\+?\s*([\d,.]+)\s*(만|천|억)?", line)
+        m = re.match(r"^(?:전투\s*)?경험치\s*\+?\s*([\d,.]+)\s*(만|천|억)?", line)
         if m:
             exp += parse_number_with_unit(m.group(1), m.group(2))
             continue
@@ -209,6 +252,13 @@ def _parse_rewards(desc_raw: str) -> dict:
             contrib += parse_number_with_unit(m.group(1), None)
             continue
 
+        m = re.match(r"^(.+우호도)\s*\+?\s*([\d,]+)", line)
+        if m:
+            favor += parse_number_with_unit(m.group(2), None)
+            if not favor_name:
+                favor_name = m.group(1).strip()
+            continue
+
         # 나머지는 아이템/기타 문구로 취급
         items.append(line)
 
@@ -217,7 +267,151 @@ def _parse_rewards(desc_raw: str) -> dict:
         "exp": exp,
         "credit": credit,
         "contrib": contrib,
+        "favor": favor,
+        "favor_name": favor_name,
         "items": items,
+    }
+
+
+def _parse_top_desc(text: str | None) -> dict:
+    """top_desc 원본 문자열을 npcs, summary, required_items 로 구조 분리.
+
+    반환값:
+        {
+            "npcs": [{"name": "...", "location": "..."}],
+            "summary": {"exp": int, "credit": int, "contrib": int,
+                        "favor": int, "favor_name": str, "coin_label": str, "coin_count": int},
+            "required_items": [["아이템1", "아이템2"], ...],  # 세미콜론 그룹 단위
+            "dungeon_note": str | None,
+        }
+    """
+    empty: dict = {
+        "npcs": [],
+        "summary": {},
+        "required_items": [],
+        "dungeon_note": None,
+    }
+    if not text:
+        return empty
+
+    # ── 1) 섹션 분리: NPC부 / 통계부 / 필요물품부 ──
+    # 통계 시작점: '총경험치' 또는 '총신용도' 등
+    stat_start = None
+    for kw in ("총경험치", "총신용도", "총상단기여도", "상단기여도"):
+        idx = text.find(kw)
+        if idx != -1 and (stat_start is None or idx < stat_start):
+            stat_start = idx
+
+    # 필요물품 시작점
+    req_start = None
+    for kw in ("필요 물품", "필요물품"):
+        idx = text.find(kw)
+        if idx != -1 and (req_start is None or idx < req_start):
+            req_start = idx
+
+    if stat_start is None:
+        # 통계 블록 없음 → 구조화 불가, 원본 그대로
+        return empty
+
+    npc_part = text[:stat_start].strip()
+    if req_start is not None and req_start > stat_start:
+        stat_part = text[stat_start:req_start].strip()
+        req_part = text[req_start:].strip()
+    else:
+        stat_part = text[stat_start:].strip()
+        req_part = ""
+
+    # ── 2) NPC 파싱 ──
+    npcs: list[dict] = []
+    npc_lines = [ln.strip() for ln in npc_part.split("\n") if ln.strip()]
+    i = 0
+    while i < len(npc_lines):
+        name = npc_lines[i]
+        location = ""
+        # 같은 줄에 괄호 위치가 있는 경우: "태환선사 (한단 아래)"
+        m = re.match(r"^(.+?)\s*[（(](.+?)[）)]$", name)
+        if m:
+            name = m.group(1).strip()
+            location = m.group(2).strip()
+        elif i + 1 < len(npc_lines):
+            next_ln = npc_lines[i + 1]
+            m2 = re.match(r"^[（(](.+?)[）)]$", next_ln)
+            if m2:
+                location = m2.group(1).strip()
+                i += 1
+        npcs.append({"name": name, "location": location})
+        i += 1
+
+    # ── 3) 통계 파싱 ──
+    # 줄바꿈을 공백으로 합쳐서 한 줄로 만든 뒤 정규식 적용
+    stat_flat = re.sub(r"\s+", " ", stat_part)
+    summary: dict = {}
+
+    # 복합 한국어 숫자 캡처 패턴 (645만, 2천만, 17만4000, 1억3757만 등)
+    # lookahead로 단위 뒤에 숫자·단위·구두점만 허용 (천년호 등 오매칭 방지)
+    _KN = r"([\d,.]+(?:\s*[억만천](?=[\s\d,.억만천,]|$)\s*[\d,.]*)*)"
+
+    m = re.search(r"총경험치\s*:?\s*\+?\s*" + _KN, stat_flat)
+    if m:
+        summary["exp"] = _parse_korean_number(m.group(1))
+
+    m = re.search(r"총신용도\s*:?\s*\+?\s*" + _KN, stat_flat)
+    if m:
+        summary["credit"] = _parse_korean_number(m.group(1))
+
+    m = re.search(
+        r"(?:총상단기여도|상단\s*기여도\s*총|상단기여도)\s*:?\s*\+?\s*" + _KN,
+        stat_flat,
+    )
+    if m:
+        summary["contrib"] = _parse_korean_number(m.group(1))
+
+    m = re.search(r"(\S+우호도)\s*:?\s*\+?\s*" + _KN, stat_flat)
+    if m:
+        summary["favor_name"] = m.group(1).strip()
+        summary["favor"] = _parse_korean_number(m.group(2))
+
+    m = re.search(r"물물교환동전\s*:?\s*\+?\s*([\d,]+)\s*개?", stat_flat)
+    if m:
+        summary["coin_label"] = "물물교환동전"
+        summary["coin_count"] = _parse_korean_number(m.group(1))
+
+    # 던전명: 원본 줄 중 통계 키워드가 없고 숫자/구두점만이 아닌 줄
+    _STAT_KW = re.compile(
+        r"총경험치|총신용도|총상단기여도|상단\s*기여도|우호도|물물교환동전"
+    )
+    _NUM_ONLY = re.compile(r"^[\d,.\s+:만천억개]*$")
+    dungeon_lines = []
+    for ln in stat_part.split("\n"):
+        ln = ln.strip().strip(",").strip()
+        if not ln:
+            continue
+        if _STAT_KW.search(ln):
+            continue
+        if _NUM_ONLY.match(ln):
+            continue
+        dungeon_lines.append(ln)
+    if dungeon_lines:
+        summary["dungeon_note"] = " ".join(dungeon_lines)
+
+    # ── 4) 필요 물품 파싱 ──
+    required_items: list[list[str]] = []
+    if req_part:
+        # "필요 물품\n:\n..." 또는 "필요물품: ..."
+        req_body = re.sub(r"^필요\s*물품\s*:?\s*", "", req_part).strip()
+        # 세미콜론으로 그룹 분리, 각 그룹 내 콤마로 아이템 분리
+        groups = re.split(r"[;\n]+", req_body)
+        for g in groups:
+            items_in_group = [
+                it.strip() for it in re.split(r"[,，]", g) if it.strip()
+            ]
+            if items_in_group:
+                required_items.append(items_in_group)
+
+    return {
+        "npcs": npcs,
+        "summary": summary,
+        "required_items": required_items,
     }
 
 
@@ -280,9 +474,14 @@ def _parse_step_row_container(container: Tag) -> dict:
 
     flush()
 
+    parsed_top = _parse_top_desc(top_desc)
+
     return {
         "title": title,
         "top_desc": top_desc,
+        "npcs": parsed_top["npcs"],
+        "summary": parsed_top["summary"],
+        "required_items": parsed_top["required_items"],
         "groups": groups,
     }
 

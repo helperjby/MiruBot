@@ -598,19 +598,104 @@ function formatInt(n) {
 }
 
 /**
+ * 숫자를 한국어 축약으로 포맷 (10000 → "1만", 174000 → "17만4,000")
+ */
+function formatKorNum(n) {
+    if (n >= 100000000) {
+        let eok = Math.floor(n / 100000000);
+        let rem = n % 100000000;
+        if (rem >= 10000) return formatInt(eok) + "억" + formatKorNum(rem);
+        if (rem > 0) return formatInt(eok) + "억" + formatInt(rem);
+        return formatInt(eok) + "억";
+    }
+    if (n >= 10000) {
+        let man = Math.floor(n / 10000);
+        let rem = n % 10000;
+        if (rem > 0) return formatInt(man) + "만" + formatInt(rem);
+        return formatInt(man) + "만";
+    }
+    return formatInt(n);
+}
+
+/**
  * 보상 객체를 한 줄로 포맷팅
  */
 function formatRewards(r) {
     if (!r) return "";
     let parts = [];
     if (r.coin) parts.push("동전 " + r.coin);
-    if (r.exp) parts.push("경험치 " + formatInt(r.exp));
+    if (r.exp) parts.push("경험치 " + formatKorNum(r.exp));
     if (r.credit) parts.push("신용도 " + formatInt(r.credit));
     if (r.contrib) parts.push("기여도 +" + r.contrib);
+    if (r.favor) parts.push("우호도 +" + r.favor);
     if (r.items && r.items.length > 0) {
         parts.push(r.items.join(", "));
     }
     return parts.join(" | ");
+}
+
+/**
+ * 컨테이너의 구조화된 top_desc 영역을 렌더링
+ */
+function renderContainerInfo(c) {
+    let msg = "";
+
+    // NPC 목록
+    let npcs = c.npcs || [];
+    if (npcs.length > 0) {
+        msg += "\n📍 NPC\n";
+        for (let i = 0; i < npcs.length; i++) {
+            let npc = npcs[i];
+            msg += "  " + npc.name;
+            if (npc.location) msg += " (" + npc.location + ")";
+            msg += "\n";
+        }
+    }
+
+    // 총합 통계
+    let s = c.summary || {};
+    let hasStats = s.exp || s.credit || s.contrib || s.favor;
+    if (hasStats) {
+        msg += "\n📊 총합\n";
+        let line1 = [];
+        let line2 = [];
+        if (s.exp) line1.push("경험치 " + formatKorNum(s.exp));
+        if (s.credit) line1.push("신용도 " + formatKorNum(s.credit));
+        if (s.contrib) line2.push("기여도 " + formatInt(s.contrib));
+        if (s.favor) {
+            let fname = s.favor_name || "우호도";
+            line2.push(fname + " " + formatInt(s.favor));
+        }
+        if (s.coin_count) line2.push((s.coin_label || "동전") + " " + s.coin_count + "개");
+        if (line1.length > 0) msg += "  " + line1.join(" | ") + "\n";
+        if (line2.length > 0) msg += "  " + line2.join(" | ") + "\n";
+        if (s.dungeon_note) msg += "  장소: " + s.dungeon_note + "\n";
+    }
+
+    // 필요 물품
+    let req = c.required_items || [];
+    if (req.length > 0) {
+        let all = [];
+        for (let i = 0; i < req.length; i++) {
+            for (let j = 0; j < req[i].length; j++) all.push(req[i][j]);
+        }
+        msg += "\n📦 필요 물품\n  " + all.join(", ") + "\n";
+    }
+
+    return msg;
+}
+
+/**
+ * 스텝의 monster 텍스트를 정리 (조건:/내용: 접두어 정리)
+ */
+function formatStepText(monster) {
+    let text = monster.replace(/\n/g, " ");
+    // "조건: 190급 내용: npc와 대화" → "190급 | npc와 대화"
+    let m = text.match(/^조건:\s*(.+?)\s*내용:\s*(.+)$/);
+    if (m) return m[1] + " | " + m[2];
+    // "내용: ..." → "..."
+    text = text.replace(/^내용:\s*/, "");
+    return text;
 }
 
 /**
@@ -626,9 +711,13 @@ function renderStepRowQuest(quest) {
     for (let i = 0; i < containers.length; i++) {
         let c = containers[i];
         if (c.title) {
-            msg += "\n■ " + c.title + "\n";
+            msg += "■ " + c.title + "\n";
         }
-        if (c.top_desc) {
+
+        // 구조화된 정보가 있으면 사용, 없으면 원본 top_desc 폴백
+        if (c.npcs || c.summary || c.required_items) {
+            msg += renderContainerInfo(c);
+        } else if (c.top_desc) {
             msg += c.top_desc + "\n";
         }
 
@@ -636,13 +725,13 @@ function renderStepRowQuest(quest) {
         for (let g = 0; g < groups.length; g++) {
             let group = groups[g];
             if (group.header) {
-                msg += "\n▸ " + group.header + "\n";
+                msg += "\n▸ " + group.header.replace(/\r?\n\s*/g, " ") + "\n";
             }
             let steps = group.steps || [];
             for (let s = 0; s < steps.length; s++) {
                 let step = steps[s];
                 let stepLabel = step.step ? "[" + step.step + "] " : "";
-                msg += stepLabel + step.monster.replace(/\n/g, " ") + "\n";
+                msg += stepLabel + formatStepText(step.monster) + "\n";
                 let rewardLine = formatRewards(step.rewards);
                 if (rewardLine) {
                     msg += "  → " + rewardLine + "\n";
@@ -840,6 +929,29 @@ bot.addListener(Event.COMMAND, function (cmd) {
             break;
         case "퀘스트":
             handleQuestCommand(cmd);
+            break;
+        case "거상봇":
+            cmd.reply("거상봇 안내입니다.\n"
+                + "\u200b".repeat(500) + "\n"
+                + "[주요 기능]\n"
+                + "1. 사통팔달: 인게임 사통팔달을 채팅으로 미러링\n"
+                + "2. 육의전: 인게임 아이템 검색 및 알람 기능\n"
+                + "3. 메모: 유저별 메모 저장/조회/삭제 기능\n"
+                + "4. 퀘스트 정보: 퀘스트에 대한 정보 제공\n"
+                + "\n[명령어]\n"
+                + " - !육의전 <이름>: 최근 육의전에 등록된 아이템 검색\n"
+                + " - !알람등록 <이름>: 육의전에 해당 아이템이 등록되었을 때 알람 기능\n"
+                + " - !알람해제 <이름>: 해당 키워드 알람 해제\n"
+                + " - !알람해제 <번호>: 해당 번호 유저의 알람 전체 해제\n"
+                + " - !알람목록: 유저별 그룹핑된 알람 리스트\n"
+                + " - !메모 <내용>: 메모 저장 후 목록 표시\n"
+                + " - !메모: 본인 메모 목록 조회\n"
+                + " - !메모삭제 <번호>: 해당 번호 메모 삭제\n"
+                + " - !퀘스트: 카테고리 목록 및 사용법\n"
+                + " - !퀘스트 목록 [카테고리]: 전체 또는 카테고리별 퀘스트 이름 나열\n"
+                + " - !퀘스트 주간: 주간-일반\n"
+                + " - !퀘스트 일일: 일일-우호도\n"
+                + " - !퀘스트 <이름>: 해당 퀘스트 상세(부분 일치 시 후보 표시)");
             break;
     }
 });
