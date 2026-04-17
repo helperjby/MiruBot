@@ -1,5 +1,5 @@
 /*
- * [외부 연동 봇] - Jsoup 직접 호출 / 비동기 처리 버전 (v2.4)
+ * [외부 연동 봇] - Jsoup 직접 호출 / 비동기 처리 버전 (v2.5)
  *
  * [업데이트 사항]
  * 1. MediaSender 보안 정책 대응 (로컬 파일 다운로드 후 전송)
@@ -16,6 +16,8 @@
  * 12. (v2.4) 이미지 전송 후 로컬 파일 삭제
  * 13. (v2.4) FileOutputStream try-finally 리소스 누수 방지
  * 14. (v2.4) URL 중복 방지 Map 기반으로 개선
+ * 15. (v2.5) MediaSender 캐시 자동 정리 (하루 1회 + 컴파일 시)
+ * 16. (v2.5) 기존 30초 임시 파일 정리 로직 제거 (하루 1회 정리로 대체)
  */
 
 const bot = BotManager.getCurrentBot();
@@ -37,6 +39,30 @@ const URL_SUMMARY_EXCLUSION_LIST = [
 const recentUrlMap = {};
 const URL_DEDUP_INTERVAL = 2000;
 const URL_DEDUP_MAX_ENTRIES = 50;
+
+// --- [캐시 정리] ---
+let lastCacheCleanDate = "";
+
+function cleanupMediaCache() {
+    try {
+        let sender = new MediaSender();
+        let dirFile = new File(sender.getBaseDirectory());
+        if (!dirFile.exists()) return;
+        let files = dirFile.listFiles();
+        if (!files || files.length === 0) return;
+        let deleted = 0;
+        for (let i = 0; i < files.length; i++) {
+            try { files[i].delete(); deleted++; } catch (e) {}
+        }
+        if (deleted > 0) Log.i("[API] 캐시 정리: " + deleted + "개 파일 삭제");
+    } catch (e) {
+        Log.e("[API] 캐시 정리 오류: " + e);
+    }
+}
+
+function onStartCompile() {
+    cleanupMediaCache();
+}
 
 /* ==================== 유틸 함수 ==================== */
 
@@ -155,6 +181,14 @@ function onCommand(cmd) {
     try {
         Log.d("[API] 명령어 수신: !" + cmd.command + " " + cmd.args.join(" "));
 
+        // 하루 1회 캐시 정리
+        let now = new Date();
+        let todayStr = now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
+        if (lastCacheCleanDate !== todayStr) {
+            lastCacheCleanDate = todayStr;
+            cleanupMediaCache();
+        }
+
         if (cmd.command === "번역") {
             let textToTranslate = cmd.args.join(" ");
             if (!textToTranslate) {
@@ -262,17 +296,6 @@ function onMessage(msg) {
                     let dirFile = new File(baseDir);
                     if (!dirFile.exists()) {
                         dirFile.mkdirs();
-                    }
-
-                    // 30초 이상 된 이전 임시 파일만 정리
-                    let now = java.lang.System.currentTimeMillis();
-                    let oldFiles = dirFile.listFiles();
-                    if (oldFiles) {
-                        for (let f = 0; f < oldFiles.length; f++) {
-                            if (now - oldFiles[f].lastModified() > 30000) {
-                                try { oldFiles[f].delete(); } catch (ignored) {}
-                            }
-                        }
                     }
 
                     let localPaths = [];
