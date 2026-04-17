@@ -22,3 +22,9 @@ Thumbs.db
 .vscode/
 .idea/
 Android/
+
+# Database
+*.db
+
+# Android backups
+Android_backup_*/
