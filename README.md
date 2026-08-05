@@ -1,5 +1,14 @@
 # MiruBot
 
+> [!IMPORTANT]
+> 이 저장소는 **MessengerBotR 기반의 레거시 미루봇**입니다.
+>
+> 신규 기능 개발과 유지보수는 중단되었으며, IRIS + Python 기반의 후속 프로젝트로 이전했습니다.
+>
+> → 현재 개발 저장소: [MiruBot-IRIS](https://github.com/helperjby/MiruBot-IRIS)
+>
+> 이 저장소는 기존 구현과 운영 기록을 보존하기 위한 용도로 유지됩니다.
+
 카카오톡 메신저봇R 기반의 다기능 챗봇 + Raspberry Pi FastAPI 백엔드 시스템
 
 ## 구성
